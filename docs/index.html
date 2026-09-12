@@ -20,13 +20,15 @@ header .meta b{color:var(--ink);font-weight:600}
 header .meta .ok{color:var(--deep);font-weight:600}
 header .meta .bad{color:var(--danger);font-weight:600}
 header .meta i{font-style:normal;color:var(--line);margin:0 5px}
-main{max-width:1200px;margin:18px auto;padding:0 16px;display:grid;gap:16px}
+main{max-width:1200px;margin:18px auto;padding:0 16px;display:grid;gap:16px;
+     grid-template-columns:minmax(0,1fr)}
 .card{background:var(--card);border:1px solid var(--line);border-radius:10px;
-      padding:16px}
+      padding:16px;min-width:0}
 .card h2{margin:0 0 13px;font-size:13px;color:var(--dim);font-weight:600;
          letter-spacing:.05em}
 .card h2 span{font-weight:400;letter-spacing:0}
-.row{display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end}
+.row{display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end;min-width:0}
+.row>div{min-width:0}
 label{display:block;font-size:12px;color:var(--dim);margin-bottom:4px}
 select,input,button{font:inherit;padding:7px 10px;border:1px solid var(--line);
                     border-radius:7px;background:#fff;color:var(--ink)}
@@ -48,7 +50,8 @@ button:disabled{opacity:.45;cursor:default;filter:none}
 .stat span{font-size:11.5px;color:var(--dim)}
 pre#log{background:#1b1f24;color:#d7dde3;padding:13px 15px;border-radius:8px;
    font:12px/1.55 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
-   max-height:340px;overflow:auto;white-space:pre-wrap;margin:12px 0 0}
+   max-height:240px;overflow:auto;white-space:pre-wrap;margin:12px 0 0;
+   overflow-wrap:anywhere}
 progress{width:100%;height:7px;margin-top:12px;accent-color:var(--accent)}
 table{width:100%;border-collapse:collapse;font-size:13px}
 th,td{text-align:left;padding:7px 10px;border-bottom:1px solid var(--line);
@@ -118,8 +121,8 @@ mark{background:#ffe9a8;border-radius:2px}
 <div class="card" id="panel" hidden>
   <h2>抓取</h2>
   <div class="row">
-    <div><label>抓法</label><select id="m" style="min-width:340px"></select></div>
-    <div><label>模式</label><select id="mode" style="min-width:210px">
+    <div><label>抓法</label><select id="m" style="width:340px;max-width:100%"></select></div>
+    <div><label>模式</label><select id="mode" style="width:210px;max-width:100%">
       <option value="fill">補齊（官網幾筆就抓幾筆）</option>
       <option value="refresh">補齊＋複查 300 筆</option>
       <option value="full">全站重抓</option>
@@ -130,7 +133,7 @@ mark{background:#ffe9a8;border-radius:2px}
     <div><label>發布日期 從（可留空）</label><input id="cf" type="date"></div>
     <div><label>到</label><input id="ct" type="date"></div>
     <div><label>限速（每筆間隔）</label>
-      <select id="iv" style="min-width:190px">
+      <select id="iv" style="width:190px;max-width:100%">
         <option value="0">不限速（測速度用）</option>
         <option value="100">100 ms　≈ 10 req/s</option>
         <option value="200">200 ms　≈ 5 req/s</option>
