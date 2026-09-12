@@ -22,6 +22,11 @@ on:
 permissions:
   contents: write
 
+# GitHub 的機器預設是 UTC，不設的話 runs.csv 裡會混著 UTC 和臺北時間，
+# 「上次更新 13:48」看起來像是下午跑的，其實是晚上 21:48。
+env:
+  TZ: Asia/Taipei
+
 concurrency:                  # 兩輪同時跑會互相蓋掉 commit
   group: crawl
   cancel-in-progress: false
@@ -76,7 +81,7 @@ jobs:
             exit 0
           fi
           N=$(git diff --cached --numstat -- docs/faq.json | awk '{print $1"+/"$2"-"}')
-          git commit -m "資料更新 $(date -u -d '+8 hours' '+%Y-%m-%d %H:%M') ${N}"
+          git commit -m "資料更新 $(date '+%Y-%m-%d %H:%M') ${N}"
           git pull --rebase --autostash
           git push
 
