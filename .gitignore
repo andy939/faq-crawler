@@ -1,0 +1,23 @@
+# 資料庫：每次抓取都會變、幾十 MB，放進 git 會讓 repo 每天肥 60 MB。
+# 走雲端硬碟或 GitHub Release，不要進版本控制。
+faq.db
+faq.db-wal
+faq.db-shm
+faq_備份_*.db
+
+# 產出物：隨時可以重新產生
+exports/
+*.xlsx
+*.csv
+update.log
+report.md
+report_*.md
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+
+# 系統
+.DS_Store
+Thumbs.db
