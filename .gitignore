@@ -1,17 +1,19 @@
-# 資料庫：每次抓取都會變、幾十 MB，放進 git 會讓 repo 每天肥 60 MB。
-# 走雲端硬碟或 GitHub Release，不要進版本控制。
+# 舊的 SQLite 資料庫。資料已經改存 docs/faq.json（跟著 git 走），
+# 這個檔留在本機當備份就好，不要進版本控制。
 faq.db
 faq.db-wal
 faq.db-shm
 faq_備份_*.db
 
-# 產出物：隨時可以重新產生
+# 匯出物、日誌
 exports/
 *.xlsx
-*.csv
+run.log
 update.log
-report.md
-report_*.md
+
+# 但 docs/ 底下的資料檔一定要進版本控制 —— 那是整個專案的本體
+*.csv
+!docs/*.csv
 
 # Python
 __pycache__/

@@ -1,0 +1,85 @@
+name: 更新 FAQ
+
+# 三種啟動方式：
+#   1. Actions 分頁按 Run workflow（可選模式）
+#   2. 每天 22:00（臺北）自動補齊
+#   3. 每週日 23:00（臺北）全站重抓一遍，抓舊資料的異動
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: 抓取模式
+        type: choice
+        default: 補齊（站上有幾筆就抓到幾筆）
+        options:
+          - 補齊（站上有幾筆就抓到幾筆）
+          - 補齊＋複查 300 筆
+          - 全站重抓（約 50 分鐘）
+  schedule:
+    - cron: '0 14 * * *'     # 每天 22:00 臺北
+    - cron: '0 15 * * 0'     # 每週日 23:00 臺北
+
+permissions:
+  contents: write
+
+concurrency:                  # 兩輪同時跑會互相蓋掉 commit
+  group: crawl
+  cancel-in-progress: false
+
+jobs:
+  crawl:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - run: pip install requests
+
+      - name: 抓取
+        id: run
+        run: |
+          case "${{ inputs.mode }}" in
+            *全站*)   ARGS="--full" ;;
+            *複查*)   ARGS="--refresh 300" ;;
+            *)        ARGS="" ;;
+          esac
+          # 排程的週日那班走全站，其餘走補齊
+          if [ -z "${{ inputs.mode }}" ] && \
+             [ "${{ github.event.schedule }}" = "0 15 * * 0" ]; then
+            ARGS="--full"
+          fi
+          echo "模式參數：${ARGS:-（補齊）}"
+          python crawl.py $ARGS 2>&1 | tee run.log
+          echo "code=${PIPESTATUS[0]}" >> "$GITHUB_OUTPUT"
+          exit 0
+
+      - name: 把結果寫進執行摘要
+        run: |
+          {
+            echo '## 抓取結果'
+            echo '```'
+            tail -12 run.log
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: 存檔
+        run: |
+          git config user.name  'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add docs/
+          if git diff --cached --quiet; then
+            echo '資料沒有變動，不用 commit'
+            exit 0
+          fi
+          N=$(git diff --cached --numstat -- docs/faq.json | awk '{print $1"+/"$2"-"}')
+          git commit -m "資料更新 $(date -u -d '+8 hours' '+%Y-%m-%d %H:%M') ${N}"
+          git pull --rebase --autostash
+          git push
+
+      - name: 沒抓完就提醒
+        if: steps.run.outputs.code != '0'
+        run: echo "::warning::爬蟲回報沒抓完整（可能被限流），詳見上面的執行摘要"

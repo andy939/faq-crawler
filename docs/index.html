@@ -1,0 +1,596 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>臺北市政府常見問答 · 工作台</title>
+<style>
+:root{
+  --bg:#fbfbfa; --panel:#fff; --line:#e6e4e0; --ink:#1d1c1a; --dim:#6b6862;
+  --accent:#1a6a5a; --accent-soft:#e8f2ef; --warn:#a8541c; --bad:#a3302a;
+  --new:#1a6a5a; --chg:#7a5d1f; --gone:#a3302a;
+  --mono:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme:dark){
+  :root{--bg:#171916;--panel:#1f221f;--line:#343833;--ink:#e9e7e2;--dim:#9b9891;
+        --accent:#6fcab3;--accent-soft:#23302c;--warn:#e0a96d;--bad:#e08a82;
+        --new:#6fcab3;--chg:#d8bb72;--gone:#e08a82;}
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);
+  font:15px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans TC",
+  "PingFang TC","Microsoft JhengHei",sans-serif;}
+header{padding:18px 20px 0;max-width:1100px;margin:0 auto}
+main{padding:0 20px 60px;max-width:1100px;margin:0 auto}
+h1{font-size:19px;margin:0 0 2px;letter-spacing:.02em}
+.sub{color:var(--dim);font-size:13px;margin-bottom:14px}
+a{color:var(--accent)}
+
+/* 狀態列 */
+.status{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:14px}
+.stat{background:var(--panel);border:1px solid var(--line);border-radius:8px;
+  padding:8px 12px;min-width:104px}
+.stat b{display:block;font-size:19px;font-variant-numeric:tabular-nums;
+  font-weight:600;line-height:1.25}
+.stat span{font-size:11.5px;color:var(--dim)}
+.stat.ok b{color:var(--accent)} .stat.bad b{color:var(--bad)}
+
+/* 分頁 */
+nav{display:flex;gap:2px;border-bottom:1px solid var(--line);margin-bottom:16px}
+nav button{background:none;border:0;border-bottom:2px solid transparent;
+  padding:9px 14px;font:inherit;font-size:14px;color:var(--dim);cursor:pointer}
+nav button[aria-selected=true]{color:var(--ink);border-bottom-color:var(--accent);
+  font-weight:600}
+section[hidden]{display:none}
+
+/* 篩選 */
+.filters{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:12px}
+input,select,button.btn{font:inherit;font-size:14px;padding:7px 10px;
+  border:1px solid var(--line);border-radius:7px;background:var(--panel);
+  color:var(--ink)}
+input:focus,select:focus{outline:2px solid var(--accent);outline-offset:-1px}
+#q{flex:1;min-width:220px}
+button.btn{cursor:pointer}
+button.btn:hover{border-color:var(--accent)}
+label.chk{display:flex;align-items:center;gap:5px;font-size:13.5px;color:var(--dim)}
+.count{color:var(--dim);font-size:13px;margin:0 0 10px}
+
+/* 清單 */
+.item{background:var(--panel);border:1px solid var(--line);border-radius:8px;
+  padding:11px 13px;margin-bottom:7px;cursor:pointer}
+.item:hover{border-color:var(--accent)}
+.item h3{margin:0;font-size:15px;font-weight:600;line-height:1.45}
+.meta{font-size:12px;color:var(--dim);margin-top:4px;
+  display:flex;flex-wrap:wrap;gap:10px}
+.tag{display:inline-block;font-size:11px;padding:1px 6px;border-radius:4px;
+  background:var(--accent-soft);color:var(--accent)}
+.tag.gone{background:transparent;border:1px solid var(--gone);color:var(--gone)}
+.body{margin-top:10px;padding-top:10px;border-top:1px solid var(--line);
+  white-space:pre-wrap;font-size:14px;line-height:1.75}
+.body .files{margin-top:10px;font-size:13px}
+.body .files a{display:block;margin-top:3px}
+mark{background:#ffe9a8;color:inherit;border-radius:2px}
+@media (prefers-color-scheme:dark){mark{background:#5a4a1a;color:#f5e6bb}}
+
+/* 表格 */
+table{width:100%;border-collapse:collapse;font-size:13px;
+  font-variant-numeric:tabular-nums}
+th,td{text-align:left;padding:6px 9px;border-bottom:1px solid var(--line);
+  white-space:nowrap}
+th{color:var(--dim);font-weight:600;font-size:12px;position:sticky;top:0;
+  background:var(--bg)}
+td.num,th.num{text-align:right}
+.wrap{overflow-x:auto;background:var(--panel);border:1px solid var(--line);
+  border-radius:8px;padding:2px 4px}
+.bar{display:inline-block;height:9px;background:var(--accent);border-radius:2px;
+  vertical-align:middle;margin-right:6px;min-width:2px}
+.act{font-weight:600}
+.act.新增{color:var(--new)} .act.異動{color:var(--chg)}
+.act.下架{color:var(--gone)} .act.復原{color:var(--accent)}
+td.t{white-space:normal;max-width:460px}
+.note{color:var(--dim);font-size:12.5px;margin-top:10px;line-height:1.7}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(290px,1fr));gap:14px}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:8px;
+  padding:13px 15px}
+.card h4{margin:0 0 9px;font-size:13px;color:var(--dim);font-weight:600}
+.row{display:flex;align-items:center;gap:8px;font-size:13px;margin-bottom:3px}
+.row .n{width:52px;text-align:right;color:var(--dim);
+  font-variant-numeric:tabular-nums}
+.row .l{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.row .b{height:7px;background:var(--accent);border-radius:2px;opacity:.75}
+#loading{padding:40px 0;color:var(--dim);text-align:center}
+.err{color:var(--bad)}
+</style>
+</head>
+<body>
+
+<header>
+  <h1>臺北市政府常見問答 · 工作台</h1>
+  <div class="sub">
+    資料來自
+    <a href="https://www.gov.taipei/News.aspx?n=EEC70A4186D4C828&sms=87415A8B9CE81B16"
+       target="_blank" rel="noopener">市府官網「常見問答」</a>，
+    由 GitHub Actions 定時抓取　·　<span id="lastrun">—</span>
+    　·　<a id="runlink" href="#" target="_blank" rel="noopener">在 GitHub 按按鈕更新 ↗</a>
+  </div>
+
+  <div class="status" id="status"></div>
+
+  <nav>
+    <button data-tab="faq" aria-selected="true">問答查詢</button>
+    <button data-tab="stat" aria-selected="false">資料概況</button>
+    <button data-tab="fix" aria-selected="false">維護建議</button>
+    <button data-tab="runs" aria-selected="false">執行紀錄</button>
+    <button data-tab="chg" aria-selected="false">異動紀錄</button>
+  </nav>
+</header>
+
+<main>
+  <div id="loading">載入資料中…</div>
+
+  <!-- 問答查詢 -->
+  <section id="tab-faq" hidden>
+    <div class="filters">
+      <input id="q" type="search" placeholder="關鍵字（標題與內容）">
+      <select id="dept"><option value="">全部機關</option></select>
+      <select id="year"><option value="">全部年份</option></select>
+      <select id="sort">
+        <option value="date-">發布日期新→舊</option>
+        <option value="date+">發布日期舊→新</option>
+        <option value="exp+">下版日期近→遠</option>
+        <option value="title">標題</option>
+      </select>
+      <label class="chk"><input type="checkbox" id="onlyfile">只看有附件</label>
+      <label class="chk"><input type="checkbox" id="showgone">含已下架</label>
+      <button class="btn" id="csv">匯出 CSV</button>
+    </div>
+    <p class="count" id="count"></p>
+    <div id="list"></div>
+    <div style="text-align:center">
+      <button class="btn" id="more" hidden>再顯示 200 筆</button>
+    </div>
+  </section>
+
+  <!-- 資料概況 -->
+  <section id="tab-stat" hidden>
+    <div class="grid">
+      <div class="card"><h4>發布機關（前 15 名）</h4><div id="s-dept"></div></div>
+      <div class="card"><h4>發布年份</h4><div id="s-year"></div></div>
+      <div class="card">
+        <h4>下版日期維護</h4><div id="s-exp"></div>
+        <p class="note">點數字會跳到問答查詢並套用條件。</p>
+      </div>
+      <div class="card"><h4>內容長度</h4><div id="s-len"></div></div>
+    </div>
+  </section>
+
+  <!-- 維護建議 -->
+  <section id="tab-fix" hidden>
+    <div class="filters">
+      <select id="fx"><option value="">全部問題類型</option></select>
+      <select id="fd"><option value="">全部機關</option></select>
+      <button class="btn" id="fcsv">匯出待修正清單 CSV</button>
+      <span class="count" id="f-count"></span>
+    </div>
+    <div class="grid" style="margin-bottom:16px">
+      <div class="card"><h4>問題類型</h4><div id="f-kind"></div></div>
+      <div class="card"><h4>待修正最多的機關（前 15 名）</h4><div id="f-dept"></div></div>
+    </div>
+    <div class="wrap"><table id="t-fix"></table></div>
+    <p class="note">
+      這一頁是拿來發給各局處的。判斷依據都寫在旁邊：<b>已過期還掛著</b>是下版
+      日期已經過了但問答還在站上；<b>沒設下版日期</b>表示不會自動下架，需要人工
+      盯；<b>一年以上沒檢視</b>用資料檢視時間判斷，沒有就退而用更新時間；
+      <b>沒有內容</b>是內文空白且沒有附件；<b>標題重複</b>是同一個標題在站上出現
+      一次以上。匯出的 CSV 一列一個問題，可以直接按機關拆給承辦。
+    </p>
+  </section>
+
+  <!-- 執行紀錄 -->
+  <section id="tab-runs" hidden>
+    <div class="wrap"><table id="t-runs"></table></div>
+    <p class="note">
+      每跑一次爬蟲就附一列。<b>每筆毫秒</b>＝耗時 ÷ 請求數，是判斷站方有沒有在
+      限流最直接的指標：平常約 130ms，挨罰時會跳到 2000ms 以上。
+      <b>被擋</b>是收到 3 KB 錯誤頁或 403/429/503 的次數——那種頁面 HTTP 狀態碼
+      仍然是 200，所以程式是用頁面大小判斷的。
+    </p>
+  </section>
+
+  <!-- 異動紀錄 -->
+  <section id="tab-chg" hidden>
+    <div class="filters">
+      <select id="cf">
+        <option value="">全部動作</option><option>新增</option>
+        <option>異動</option><option>下架</option><option>復原</option>
+      </select>
+      <span class="count" id="c-count"></span>
+    </div>
+    <div class="wrap"><table id="t-chg"></table></div>
+    <p class="note">
+      總筆數一樣不代表沒事——可能今天新增一筆、同時下架一筆。所以每次抓取都
+      逐筆比對前一版，把進出和欄位變動記在這裡。
+    </p>
+  </section>
+</main>
+
+<script>
+// ---- 小工具 ----------------------------------------------------------------
+const $ = s => document.querySelector(s);
+const esc = s => (s||'').replace(/[&<>"]/g, c =>
+  ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const nf = n => (n==null||n==='') ? '' : Number(n).toLocaleString('zh-TW');
+
+/** 很小的 CSV 解析器：處理引號、跳脫引號、換行 */
+function parseCSV(text){
+  const rows=[]; let row=[], cell='', q=false;
+  for(let i=0;i<text.length;i++){
+    const c=text[i];
+    if(q){
+      if(c==='"'){ if(text[i+1]==='"'){cell+='"';i++;} else q=false; }
+      else cell+=c;
+    } else if(c==='"') q=true;
+    else if(c===','){ row.push(cell); cell=''; }
+    else if(c==='\n'){ row.push(cell); rows.push(row); row=[]; cell=''; }
+    else if(c!=='\r') cell+=c;
+  }
+  if(cell||row.length){ row.push(cell); rows.push(row); }
+  if(!rows.length) return [];
+  const head=rows.shift();
+  return rows.filter(r=>r.length>1)
+             .map(r=>Object.fromEntries(head.map((h,i)=>[h,r[i]??''])));
+}
+
+function toCSV(rows, cols){
+  const q = v => '"'+String(v??'').replace(/"/g,'""')+'"';
+  return '﻿'+[cols.join(',')]
+    .concat(rows.map(r=>cols.map(c=>q(r[c])).join(','))).join('\r\n');
+}
+function download(name, text, type='text/csv;charset=utf-8'){
+  const a=document.createElement('a');
+  a.href=URL.createObjectURL(new Blob([text],{type}));
+  a.download=name; a.click(); URL.revokeObjectURL(a.href);
+}
+
+// GitHub Actions 的手動執行按鈕在哪 —— 從網址推出 owner/repo，
+// 例如 https://someone.github.io/faq-crawler/ → someone/faq-crawler
+(function(){
+  const m = location.hostname.match(/^([^.]+)\.github\.io$/);
+  const repo = location.pathname.split('/').filter(Boolean)[0];
+  $('#runlink').href = m
+    ? `https://github.com/${m[1]}/${repo||m[1]+'.github.io'}/actions`
+    : 'https://github.com';
+})();
+
+// ---- 載入 ------------------------------------------------------------------
+let ALL=[], META={}, RUNS=[], CHG=[], shown=200;
+
+Promise.all([
+  fetch('faq.json').then(r=>r.json()),
+  fetch('meta.json').then(r=>r.json()).catch(()=>({})),
+  fetch('runs.csv').then(r=>r.ok?r.text():'').then(parseCSV).catch(()=>[]),
+  fetch('changes.csv').then(r=>r.ok?r.text():'').then(parseCSV).catch(()=>[]),
+]).then(([faq,meta,runs,chg])=>{
+  ALL=faq; META=meta; RUNS=runs.reverse(); CHG=chg.reverse();
+  $('#loading').hidden=true;
+  init();
+}).catch(e=>{
+  $('#loading').innerHTML='<span class="err">載入失敗：'+esc(e.message)+
+    '</span><br><span class="note">本機開啟要用 <code>python -m http.server</code>，'+
+    '直接雙擊 HTML 檔瀏覽器會擋住 fetch。</span>';
+});
+
+// ---- 狀態列 ----------------------------------------------------------------
+function status(){
+  const live=ALL.filter(r=>!r.gone);
+  const site=META.site_total, got=META.got??live.length;
+  const miss=site?site-got:null;
+  const body=live.filter(r=>r.answer||(r.files&&r.files.length)).length;
+  const cards=[
+    [nf(site)||'—','官網筆數',''],
+    [nf(got),'已下載', miss===0?'ok':(miss>0?'bad':'')],
+    [miss==null?'—':(miss===0?'一致':'差 '+nf(miss)),'完整性',
+       miss===0?'ok':(miss>0?'bad':'')],
+    [nf(body),'有內容',''],
+    [nf(ALL.length-live.length),'已下架保留',''],
+    [(META.last_elapsed??'—')+(META.last_elapsed?'s':''),'上次耗時',''],
+    [nf(META.last_reqs)||'—','上次請求數',''],
+    [nf(META.last_blocked)||'0','上次被擋', META.last_blocked?'bad':''],
+  ];
+  $('#status').innerHTML=cards.map(([v,l,c])=>
+    `<div class="stat ${c}"><b>${v}</b><span>${l}</span></div>`).join('');
+  $('#lastrun').textContent = META.last_run
+    ? `上次更新 ${META.last_run}（${META.last_mode||''}，${META.last_where||''}）`
+    : '';
+}
+
+// ---- 分頁 ------------------------------------------------------------------
+document.querySelectorAll('nav button').forEach(b=>b.onclick=()=>{
+  document.querySelectorAll('nav button').forEach(x=>
+    x.setAttribute('aria-selected', x===b));
+  ['faq','stat','fix','runs','chg'].forEach(t=>
+    $('#tab-'+t).hidden = t!==b.dataset.tab);
+});
+
+// ---- 問答查詢 --------------------------------------------------------------
+function norm(s){return (s||'').toLowerCase();}
+
+function filtered(){
+  const q=norm($('#q').value.trim()), dept=$('#dept').value,
+        year=$('#year').value, onlyfile=$('#onlyfile').checked,
+        gone=$('#showgone').checked, ex=$('#q').dataset.expire||'';
+  const today=new Date().toISOString().slice(0,10);
+  let out=ALL.filter(r=>{
+    if(!gone && r.gone) return false;
+    if(dept && r.dept!==dept) return false;
+    if(year && !(r.published||'').startsWith(year)) return false;
+    if(onlyfile && !(r.files&&r.files.length)) return false;
+    if(ex==='past' && !(r.expire && r.expire.slice(0,10)<today)) return false;
+    if(ex==='soon'){
+      const d=(r.expire||'').slice(0,10);
+      if(!(d>=today && d<=plus(90))) return false;
+    }
+    if(ex==='none' && r.expire) return false;
+    if(ex==='stale'){
+      const d=(r.reviewed||r.updated||'').slice(0,10);
+      if(!(!d || d<plus(-365))) return false;
+    }
+    if(q && !(norm(r.title).includes(q)||norm(r.answer).includes(q)||
+              norm(r.dept).includes(q))) return false;
+    return true;
+  });
+  const s=$('#sort').value;
+  out.sort(s==='title' ? (a,b)=>a.title.localeCompare(b.title,'zh-Hant')
+    : s==='date+' ? (a,b)=>(a.published||'').localeCompare(b.published||'')
+    : s==='exp+'  ? (a,b)=>(a.expire||'9999').localeCompare(b.expire||'9999')
+    : (a,b)=>(b.published||'').localeCompare(a.published||''));
+  return out;
+}
+function plus(days){
+  const d=new Date(); d.setDate(d.getDate()+days);
+  return d.toISOString().slice(0,10);
+}
+
+function hl(text,q){
+  if(!q) return esc(text);
+  const i=norm(text).indexOf(q);
+  if(i<0) return esc(text);
+  return esc(text.slice(0,i))+'<mark>'+esc(text.slice(i,i+q.length))+'</mark>'+
+         esc(text.slice(i+q.length));
+}
+
+function snippet(r,q){
+  if(!q||!r.answer) return '';
+  const i=norm(r.answer).indexOf(q);
+  if(i<0) return '';
+  const s=Math.max(0,i-40);
+  return '…'+hl(r.answer.slice(s,i+q.length+80).replace(/\n/g,' '),q)+'…';
+}
+
+let LIST=[];
+function render(reset){
+  if(reset) shown=200;
+  LIST=filtered();
+  const q=norm($('#q').value.trim());
+  $('#count').textContent=`符合 ${nf(LIST.length)} 筆`+
+    (LIST.length>shown?`，顯示前 ${nf(shown)} 筆`:'');
+  $('#list').innerHTML=LIST.slice(0,shown).map((r,i)=>`
+    <div class="item" data-i="${i}">
+      <h3>${hl(r.title,q)}</h3>
+      <div class="meta">
+        <span>${esc(r.dept)}</span>
+        <span>發布 ${esc((r.published||'').slice(0,10)||'—')}</span>
+        ${r.expire?`<span>下版 ${esc(r.expire.slice(0,10))}</span>`:''}
+        ${r.files&&r.files.length?`<span class="tag">附件 ${r.files.length}</span>`:''}
+        ${r.kind==='external'?'<span class="tag">外部連結</span>':''}
+        ${r.gone?`<span class="tag gone">已下架 ${esc(r.gone)}</span>`:''}
+      </div>
+      ${snippet(r,q)?`<div class="meta">${snippet(r,q)}</div>`:''}
+    </div>`).join('');
+  $('#more').hidden = LIST.length<=shown;
+}
+
+$('#list').onclick=e=>{
+  const el=e.target.closest('.item'); if(!el) return;
+  const open=el.querySelector('.body');
+  if(open){ open.remove(); return; }
+  const r=LIST[+el.dataset.i];
+  const files=(r.files||[]).map(f=>
+    `<a href="${esc(f.url)}" target="_blank" rel="noopener">📎 ${esc(f.name)}
+     <span style="color:var(--dim)">${esc(f.kind)} ${esc(f.size)}</span></a>`).join('');
+  const d=document.createElement('div');
+  d.className='body';
+  d.innerHTML=(r.answer?esc(r.answer):'<i style="color:var(--dim)">（站上沒有內文）</i>')+
+    (files?`<div class="files"><b>相關檔案</b>${files}</div>`:'')+
+    `<div class="files"><a href="${esc(r.url)}" target="_blank" rel="noopener">
+       在市府官網開啟 ↗</a>
+     <span style="color:var(--dim)">　更新 ${esc(r.updated||'—')}
+       　檢視 ${esc(r.reviewed||'—')}　維護 ${esc(r.maintainer||'—')}</span></div>`;
+  el.appendChild(d);
+};
+
+let timer;
+$('#q').oninput=()=>{clearTimeout(timer);timer=setTimeout(()=>render(true),180);};
+['#dept','#year','#sort','#onlyfile','#showgone'].forEach(s=>
+  $(s).onchange=()=>render(true));
+$('#more').onclick=()=>{shown+=200;render(false);};
+$('#csv').onclick=()=>download(
+  `常見問答_${new Date().toISOString().slice(0,10)}_${LIST.length}筆.csv`,
+  toCSV(LIST.map(r=>({...r,
+      files:(r.files||[]).map(f=>f.name).join(' | '),
+      answer:(r.answer||'').replace(/\s+/g,' ')})),
+    ['sid','title','dept','published','updated','reviewed','expire',
+     'maintainer','answer','files','url','kind','gone']));
+
+// ---- 資料概況 --------------------------------------------------------------
+function bars(el, pairs, onclick){
+  const max=Math.max(1,...pairs.map(p=>p[1]));
+  el.innerHTML=pairs.map(([k,v],i)=>`
+    <div class="row"><span class="l" title="${esc(k)}">${esc(k)}</span>
+      <span class="b" style="width:${Math.round(v/max*90)}px"></span>
+      <span class="n" ${onclick?`style="cursor:pointer;color:var(--accent)"
+        data-i="${i}"`:''}>${nf(v)}</span></div>`).join('');
+  if(onclick) el.onclick=e=>{
+    const t=e.target.closest('[data-i]'); if(t) onclick(pairs[+t.dataset.i][0]);
+  };
+}
+
+function stats(){
+  const live=ALL.filter(r=>!r.gone);
+  const by=(f)=>{const m=new Map();live.forEach(r=>{const k=f(r);
+    if(k) m.set(k,(m.get(k)||0)+1);});return [...m].sort((a,b)=>b[1]-a[1]);};
+
+  bars($('#s-dept'), by(r=>r.dept).slice(0,15), k=>{
+    $('#dept').value=k; goFaq();
+  });
+  bars($('#s-year'), by(r=>(r.published||'').slice(0,4))
+    .sort((a,b)=>b[0].localeCompare(a[0])), k=>{ $('#year').value=k; goFaq(); });
+
+  const today=new Date().toISOString().slice(0,10), soon=plus(90), old=plus(-365);
+  const ex=[
+    ['已過期還掛著', live.filter(r=>r.expire&&r.expire.slice(0,10)<today).length,'past'],
+    ['90 天內到期', live.filter(r=>{const d=(r.expire||'').slice(0,10);
+        return d>=today&&d<=soon;}).length,'soon'],
+    ['沒設下版日期', live.filter(r=>!r.expire).length,'none'],
+    ['一年以上沒檢視', live.filter(r=>{const d=(r.reviewed||r.updated||'').slice(0,10);
+        return !d||d<old;}).length,'stale'],
+  ];
+  bars($('#s-exp'), ex.map(e=>[e[0],e[1]]), k=>{
+    $('#q').dataset.expire = ex.find(e=>e[0]===k)[2]; goFaq();
+  });
+
+  const buck=[['沒有內文',0],['1–200 字',0],['200–1000 字',0],
+              ['1000–3000 字',0],['3000 字以上',0]];
+  live.forEach(r=>{const n=(r.answer||'').length;
+    buck[n===0?0:n<200?1:n<1000?2:n<3000?3:4][1]++;});
+  bars($('#s-len'), buck);
+}
+function goFaq(){
+  document.querySelector('nav button[data-tab=faq]').click();
+  render(true);
+  scrollTo({top:0,behavior:'smooth'});
+}
+// 清掉「下版日期維護」的隱藏條件：關鍵字一改就解除
+$('#q').addEventListener('focus',()=>{delete $('#q').dataset.expire;});
+
+// ---- 維護建議 --------------------------------------------------------------
+// 每一筆可能同時有好幾個問題，所以攤平成「一列一個問題」，
+// 這樣匯出去就是承辦可以直接照著改的清單。
+let FIX=[];
+function buildFix(){
+  const live=ALL.filter(r=>!r.gone);
+  const today=new Date().toISOString().slice(0,10), old=plus(-365);
+  const titles=new Map();
+  live.forEach(r=>{const k=(r.title||'').trim();
+    if(k) titles.set(k,(titles.get(k)||0)+1);});
+
+  FIX=[];
+  live.forEach(r=>{
+    const exp=(r.expire||'').slice(0,10);
+    const chk=(r.reviewed||r.updated||r.published||'').slice(0,10);
+    const add=(問題,說明)=>FIX.push({問題,說明,sid:r.sid,機關:r.dept||'（未填）',
+      標題:r.title,發布日期:(r.published||'').slice(0,10),下版日期:exp,
+      最後檢視:chk,網址:r.url});
+    if(exp && exp<today) add('已過期還掛著',`下版日期 ${exp} 已過`);
+    if(!exp) add('沒設下版日期','不會自動下架，需要人工盯');
+    if(!chk || chk<old) add('一年以上沒檢視',`最後異動 ${chk||'不明'}`);
+    if(r.kind!=='external' && !r.answer && !(r.files&&r.files.length))
+      add('沒有內容','內文空白且沒有附件');
+    if(r.kind==='external') add('連到外部網站','內容不在市府網站，連結可能失效');
+    if(titles.get((r.title||'').trim())>1)
+      add('標題重複',`同樣標題有 ${titles.get(r.title.trim())} 筆`);
+  });
+
+  const kinds=[...new Set(FIX.map(f=>f.問題))];
+  $('#fx').innerHTML='<option value="">全部問題類型</option>'+
+    kinds.map(k=>`<option>${esc(k)}</option>`).join('');
+  const ds=[...new Set(FIX.map(f=>f.機關))].sort((a,b)=>a.localeCompare(b,'zh-Hant'));
+  $('#fd').innerHTML='<option value="">全部機關</option>'+
+    ds.map(d=>`<option>${esc(d)}</option>`).join('');
+  fix();
+}
+
+function fixRows(){
+  const k=$('#fx').value, d=$('#fd').value;
+  return FIX.filter(f=>(!k||f.問題===k)&&(!d||f.機關===d));
+}
+
+function fix(){
+  const rows=fixRows();
+  $('#f-count').textContent=`共 ${nf(rows.length)} 項待修正，`+
+    `涉及 ${nf(new Set(rows.map(r=>r.sid)).size)} 筆問答`;
+  const tally=f=>{const m=new Map();rows.forEach(r=>m.set(r[f],(m.get(r[f])||0)+1));
+    return [...m].sort((a,b)=>b[1]-a[1]);};
+  bars($('#f-kind'), tally('問題'), k=>{ $('#fx').value=k; fix(); });
+  bars($('#f-dept'), tally('機關').slice(0,15), k=>{ $('#fd').value=k; fix(); });
+  $('#t-fix').innerHTML=
+    '<tr><th>問題</th><th>說明</th><th>機關</th><th>下版日期</th>'+
+    '<th>最後檢視</th><th>標題</th></tr>'+
+    rows.slice(0,300).map(r=>`<tr>
+      <td class="act 異動">${esc(r.問題)}</td><td>${esc(r.說明)}</td>
+      <td>${esc(r.機關)}</td><td>${esc(r.下版日期)}</td><td>${esc(r.最後檢視)}</td>
+      <td class="t"><a href="${esc(r.網址)}" target="_blank"
+        rel="noopener">${esc(r.標題)}</a></td></tr>`).join('')+
+    (rows.length>300?'<tr><td colspan="6">…只顯示前 300 列，完整清單請匯出 CSV</td></tr>':'');
+}
+$('#fx').onchange=fix; $('#fd').onchange=fix;
+$('#fcsv').onclick=()=>download(
+  `待修正清單_${new Date().toISOString().slice(0,10)}.csv`,
+  toCSV(fixRows(), ['機關','問題','說明','標題','發布日期','下版日期','最後檢視','網址']));
+
+// ---- 執行紀錄 --------------------------------------------------------------
+function runs(){
+  if(!RUNS.length){ $('#t-runs').innerHTML='<tr><td>還沒有執行紀錄</td></tr>'; return; }
+  const cols=Object.keys(RUNS[0]);
+  const max=Math.max(...RUNS.map(r=>+r['耗時秒']||0));
+  $('#t-runs').innerHTML=
+    '<tr>'+cols.map(c=>`<th class="${isNum(c)?'num':''}">${esc(c)}</th>`).join('')+'</tr>'+
+    RUNS.slice(0,80).map(r=>'<tr>'+cols.map(c=>{
+      if(c==='耗時秒'){
+        const w=Math.round((+r[c]||0)/max*60);
+        return `<td class="num"><span class="bar" style="width:${w}px"></span>${esc(r[c])}</td>`;
+      }
+      const bad=(c==='被擋'&&+r[c]>0)||(c==='缺'&&+r[c]>0);
+      return `<td class="${isNum(c)?'num':''}" ${bad?'style="color:var(--bad)"':''}>`+
+             esc(r[c])+'</td>';
+    }).join('')+'</tr>').join('');
+}
+const isNum=c=>['站上筆數','已下載','缺','新增','異動','下架','復原','請求數',
+  '被擋','耗時秒','每筆毫秒','下載MB'].includes(c);
+
+// ---- 異動紀錄 --------------------------------------------------------------
+function chg(){
+  const f=$('#cf').value;
+  const rows=CHG.filter(r=>!f||r['動作']===f);
+  $('#c-count').textContent=`共 ${nf(rows.length)} 筆，顯示最近 300 筆`;
+  if(!rows.length){ $('#t-chg').innerHTML='<tr><td>還沒有異動紀錄</td></tr>'; return; }
+  $('#t-chg').innerHTML=
+    '<tr><th>時間</th><th>動作</th><th>變動欄位</th><th>發布日期</th>'+
+    '<th>機關</th><th>標題</th></tr>'+
+    rows.slice(0,300).map(r=>`<tr>
+      <td>${esc(r['時間'])}</td>
+      <td class="act ${esc(r['動作'])}">${esc(r['動作'])}</td>
+      <td>${esc(r['變動欄位'])}</td>
+      <td>${esc(r['發布日期'])}</td>
+      <td>${esc(r['機關'])}</td>
+      <td class="t"><a href="${esc(r['網址'])}" target="_blank"
+        rel="noopener">${esc(r['標題'])}</a></td></tr>`).join('');
+}
+$('#cf').onchange=chg;
+
+// ---- 啟動 ------------------------------------------------------------------
+function init(){
+  const depts=[...new Set(ALL.map(r=>r.dept).filter(Boolean))]
+    .sort((a,b)=>a.localeCompare(b,'zh-Hant'));
+  $('#dept').innerHTML='<option value="">全部機關</option>'+
+    depts.map(d=>`<option>${esc(d)}</option>`).join('');
+  const years=[...new Set(ALL.map(r=>(r.published||'').slice(0,4)).filter(Boolean))]
+    .sort().reverse();
+  $('#year').innerHTML='<option value="">全部年份</option>'+
+    years.map(y=>`<option>${esc(y)}</option>`).join('');
+  status(); render(true); stats(); buildFix(); runs(); chg();
+  $('#tab-faq').hidden=false;
+}
+</script>
+</body>
+</html>

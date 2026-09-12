@@ -1,0 +1,4 @@
+# 兩台電腦（Mac／Windows）加上 GitHub Actions（Linux）同時在改，
+# 換行不統一的話 faq.json 會整份八千行都變成衝突。一律用 LF。
+* text=auto eol=lf
+*.bat text eol=crlf
