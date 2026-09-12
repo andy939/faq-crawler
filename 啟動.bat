@@ -1,7 +1,12 @@
 @echo off
 chcp 65001 >nul
-cd /d "%~dp0docs"
-echo 網頁工作台：http://127.0.0.1:8765
-echo 關掉這個視窗就停止。
-start http://127.0.0.1:8765
-python -m http.server 8765 --bind 127.0.0.1
+cd /d "%~dp0"
+where python >nul 2>nul
+if errorlevel 1 (
+  echo 這台電腦沒有 Python。
+  echo 到 https://www.python.org/downloads/ 下載安裝，
+  echo 安裝時記得勾選「Add python.exe to PATH」，然後再跑一次。
+  pause & exit /b 1
+)
+python 工作台.py
+pause

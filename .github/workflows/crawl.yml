@@ -52,10 +52,17 @@ jobs:
             *複查*)   ARGS="--refresh 300" ;;
             *)        ARGS="" ;;
           esac
-          # 排程的週日那班走全站，其餘走補齊
-          if [ -z "${{ inputs.mode }}" ] && \
-             [ "${{ github.event.schedule }}" = "0 15 * * 0" ]; then
-            ARGS="--full"
+          # 排程：週日那班走全站，平日走「補齊＋複查 500 筆」。
+          # 為什麼平日要複查：官網清單只印發布日期、不印更新時間，
+          # 所以既有問答的「內容被改了」從清單上看不出來，非得去敲內文頁不可。
+          # 每天輪 500 筆，約 17 天可以輪完全站；週日的全站重抓則保證
+          # 最慢 7 天一定會發現。兩者搭配，改動不會石沉大海。
+          if [ -z "${{ inputs.mode }}" ]; then
+            if [ "${{ github.event.schedule }}" = "0 15 * * 0" ]; then
+              ARGS="--full"
+            else
+              ARGS="--refresh 500"
+            fi
           fi
           echo "模式參數：${ARGS:-（補齊）}"
           python crawl.py $ARGS 2>&1 | tee run.log

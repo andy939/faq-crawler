@@ -100,6 +100,9 @@ td.t{white-space:normal;max-width:460px}
 .row .b{height:7px;background:var(--accent);border-radius:2px;opacity:.75}
 #loading{padding:40px 0;color:var(--dim);text-align:center}
 .err{color:var(--bad)}
+#plog{background:var(--bg);border:1px solid var(--line);border-radius:6px;
+  padding:9px 11px;margin:10px 0 0;max-height:300px;overflow:auto;
+  font:12.5px/1.6 var(--mono);white-space:pre-wrap;word-break:break-all}
 </style>
 </head>
 <body>
@@ -188,6 +191,18 @@ td.t{white-space:normal;max-width:460px}
 
   <!-- 執行紀錄 -->
   <section id="tab-runs" hidden>
+    <!-- 只有用「啟動.bat」在本機打開才會出現；GitHub Pages 上是唯讀的 -->
+    <div class="card" style="margin-bottom:16px" id="panel" hidden>
+      <h4 style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+        本機控制台
+        <select id="pmode" style="font-size:13px;padding:4px 8px"></select>
+        <button class="btn" id="prun" style="padding:4px 12px;font-size:13px">
+          ▶ 開始抓取</button>
+        <span id="pstat" class="count" style="margin:0"></span>
+      </h4>
+      <pre id="plog" hidden></pre>
+    </div>
+
     <div class="card" style="margin-bottom:16px">
       <h4 style="display:flex;align-items:center;gap:10px">
         GitHub Actions 現況
@@ -547,6 +562,54 @@ $('#fcsv').onclick=()=>download(
   `待修正清單_${new Date().toISOString().slice(0,10)}.csv`,
   toCSV(fixRows(), ['機關','問題','說明','標題','發布日期','下版日期','最後檢視','網址']));
 
+// ---- 本機控制台 ------------------------------------------------------------
+// 用「啟動.bat」打開時，工作台.py 會回應 /api/ping，這塊才會出現。
+// 放在 GitHub Pages 上時那支是 404，網頁就只是唯讀的監控頁。
+let POLL, SEEN=0;
+async function localPanel(){
+  let info;
+  try{
+    const r=await fetch('api/ping',{cache:'no-store'});
+    if(!r.ok) return; info=await r.json();
+  }catch(e){ return; }              // 不是本機，安靜地跳過
+  $('#panel').hidden=false;
+  $('#pmode').innerHTML=info.modes
+    .map(m=>`<option value="${esc(m.key)}">${esc(m.label)}</option>`).join('');
+  $('#prun').onclick=async()=>{
+    $('#prun').disabled=true;
+    const r=await fetch('api/run?mode='+$('#pmode').value,{method:'POST'});
+    const j=await r.json();
+    if(!j.ok){ $('#pstat').textContent=j.msg; $('#prun').disabled=false; return; }
+    SEEN=0; $('#plog').hidden=false; $('#plog').textContent='';
+    poll();
+  };
+  poll();                            // 進來時若已經有一輪在跑，接著顯示
+}
+
+async function poll(){
+  clearTimeout(POLL);
+  let s;
+  try{ s=await (await fetch('api/log?since='+SEEN,{cache:'no-store'})).json(); }
+  catch(e){ return; }
+  if(s.lines.length){
+    $('#plog').hidden=false;
+    $('#plog').textContent+=s.lines.join('\n')+'\n';
+    $('#plog').scrollTop=$('#plog').scrollHeight;
+    SEEN=s.total;
+  }
+  $('#prun').disabled=s.running;
+  $('#pstat').textContent = s.running
+    ? `${s.mode} 執行中… ${s.elapsed} 秒`
+    : (s.mode ? `${s.mode} 已結束（${s.elapsed} 秒）` : '');
+  if(s.running){ POLL=setTimeout(poll, 700); return; }
+  if(s.code!==null && !$('#pstat').dataset.done){
+    // 跑完了，資料檔已經換掉，重新載入才看得到新內容
+    $('#pstat').dataset.done='1';
+    $('#pstat').innerHTML+='　<a href="#" onclick="location.reload();return false">'+
+      '重新載入資料 ↻</a>';
+  }
+}
+
 // ---- GitHub Actions 現況（公開 API，不需要登入）----------------------------
 // 回報的是「GitHub 上那支爬蟲現在跑到哪」，跟下面 runs.csv 的「跑完的結果」
 // 是兩回事：正在跑的時候 runs.csv 還沒更新，要看這裡。
@@ -657,7 +720,7 @@ function init(){
     .sort().reverse();
   $('#year').innerHTML='<option value="">全部年份</option>'+
     years.map(y=>`<option>${esc(y)}</option>`).join('');
-  status(); render(true); stats(); buildFix(); runs(); chg(); gha();
+  status(); render(true); stats(); buildFix(); runs(); chg(); gha(); localPanel();
   $('#tab-faq').hidden=false;
 }
 </script>
