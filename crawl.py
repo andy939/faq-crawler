@@ -129,7 +129,8 @@ def emit(**kv):
     """工作台.py 會設 CRAWL_JSON=1，這時每隔一下就吐一行機器讀的進度，
     網頁上那八個指標卡就是靠它。命令列直接跑的時候完全不印。"""
     if os.environ.get("CRAWL_JSON"):
-        sys.stdout.write("@@" + json.dumps(kv, ensure_ascii=False) + "\n")
+        # 前面補換行：進度是用 \r 原地更新、不換行的，不補的話會黏在一起
+        sys.stdout.write("\n@@" + json.dumps(kv, ensure_ascii=False) + "\n")
         sys.stdout.flush()
 
 
