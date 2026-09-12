@@ -188,6 +188,17 @@ td.t{white-space:normal;max-width:460px}
 
   <!-- 執行紀錄 -->
   <section id="tab-runs" hidden>
+    <div class="card" style="margin-bottom:16px">
+      <h4 style="display:flex;align-items:center;gap:10px">
+        GitHub Actions 現況
+        <button class="btn" id="gha-go" style="padding:4px 10px;font-size:13px">
+          ▶ 在 GitHub 執行一次</button>
+        <button class="btn" id="gha-rf" style="padding:4px 10px;font-size:13px">
+          重新整理</button>
+        <span id="gha-live" class="count" style="margin:0"></span>
+      </h4>
+      <div id="gha">讀取中…</div>
+    </div>
     <div class="wrap"><table id="t-runs"></table></div>
     <p class="note">
       每跑一次爬蟲就附一列。<b>每筆毫秒</b>＝耗時 ÷ 請求數，是判斷站方有沒有在
@@ -254,16 +265,14 @@ function download(name, text, type='text/csv;charset=utf-8'){
 
 // GitHub Actions 的手動執行按鈕在哪 —— 從網址推出 owner/repo，
 // 例如 https://someone.github.io/faq-crawler/ → someone/faq-crawler
-(function(){
-  const m = location.hostname.match(/^([^.]+)\.github\.io$/);
-  const repo = location.pathname.split('/').filter(Boolean)[0];
-  $('#runlink').href = m
-    ? `https://github.com/${m[1]}/${repo||m[1]+'.github.io'}/actions`
-    : 'https://github.com';
-})();
+// #runlink 的網址在 gha() 那一段用 repoSlug() 設定
 
 // ---- 載入 ------------------------------------------------------------------
 let ALL=[], META={}, RUNS=[], CHG=[], shown=200;
+// repoSlug() 定義在下面「GitHub Actions 現況」那一段
+addEventListener('DOMContentLoaded',()=>{
+  $('#runlink').href=`https://github.com/${repoSlug()}/actions/workflows/crawl.yml`;
+});
 
 Promise.all([
   fetch('faq.json').then(r=>r.json()),
@@ -538,6 +547,66 @@ $('#fcsv').onclick=()=>download(
   `待修正清單_${new Date().toISOString().slice(0,10)}.csv`,
   toCSV(fixRows(), ['機關','問題','說明','標題','發布日期','下版日期','最後檢視','網址']));
 
+// ---- GitHub Actions 現況（公開 API，不需要登入）----------------------------
+// 回報的是「GitHub 上那支爬蟲現在跑到哪」，跟下面 runs.csv 的「跑完的結果」
+// 是兩回事：正在跑的時候 runs.csv 還沒更新，要看這裡。
+const REPO_FALLBACK = 'andy939/faq-crawler';   // 本機預覽時用的預設值
+function repoSlug(){
+  const m = location.hostname.match(/^([^.]+)\.github\.io$/);
+  const seg = location.pathname.split('/').filter(Boolean)[0];
+  return m ? `${m[1]}/${seg || m[1] + '.github.io'}` : REPO_FALLBACK;
+}
+const DOT = {success:['✔','var(--accent)'], failure:['✖','var(--bad)'],
+             cancelled:['■','var(--dim)'], skipped:['–','var(--dim)'],
+             in_progress:['●','var(--warn)'], queued:['○','var(--warn)']};
+
+let ghaTimer;
+async function gha(){
+  clearTimeout(ghaTimer);
+  const el=$('#gha');
+  try{
+    const r=await fetch(
+      `https://api.github.com/repos/${repoSlug()}/actions/runs?per_page=8`);
+    if(!r.ok) throw new Error('HTTP '+r.status+
+      (r.status===404?'（repo 還沒推上去，或名字不一樣）':''));
+    const runs=(await r.json()).workflow_runs
+      .filter(w=>!/pages build/i.test(w.name));
+    if(!runs.length){ el.textContent='還沒有執行紀錄'; return; }
+    const live=runs.filter(w=>w.status!=='completed');
+    el.innerHTML=runs.slice(0,6).map(w=>{
+      const key=w.status==='completed'?w.conclusion:w.status;
+      const [ch,col]=DOT[key]||['?','var(--dim)'];
+      const t0=new Date(w.run_started_at), t1=new Date(w.updated_at);
+      const sec=Math.max(0,Math.round((t1-t0)/1000));
+      return `<div class="row">
+        <span style="color:${col};width:14px">${ch}</span>
+        <span class="l">${esc(w.display_title||w.name)}</span>
+        <span style="color:var(--dim)">${w.event==='schedule'?'排程':'手動'}</span>
+        <span style="color:var(--dim)">${t0.toLocaleString('zh-TW',
+          {month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'})}</span>
+        <span class="n">${w.status==='completed'?sec+'s':'執行中'}</span>
+        <a href="${esc(w.html_url)}" target="_blank" rel="noopener">紀錄↗</a>
+      </div>`;}).join('');
+    if(live.length){
+      $('#gha-live').textContent='有一輪正在跑，20 秒後自動更新…';
+      ghaTimer=setTimeout(gha, 20000);
+    } else {
+      $('#gha-live').textContent = LASTSEEN && LASTSEEN!==runs[0].id
+        ? '剛跑完一輪，重新整理頁面才會看到新資料' : '';
+    }
+    LASTSEEN=LASTSEEN||runs[0].id;
+  }catch(e){
+    el.innerHTML='<span class="err">讀不到 GitHub 狀態：'+esc(e.message)+'</span>';
+  }
+}
+let LASTSEEN=0;
+$('#gha-rf').onclick=gha;
+$('#gha-go').onclick=()=>{
+  // 沒辦法在網頁上直接觸發（那需要寫入權限的 token，放進網頁等於公開），
+  // 所以帶去 Actions 頁面按 Run workflow。
+  open(`https://github.com/${repoSlug()}/actions/workflows/crawl.yml`,'_blank');
+};
+
 // ---- 執行紀錄 --------------------------------------------------------------
 function runs(){
   if(!RUNS.length){ $('#t-runs').innerHTML='<tr><td>還沒有執行紀錄</td></tr>'; return; }
@@ -588,7 +657,7 @@ function init(){
     .sort().reverse();
   $('#year').innerHTML='<option value="">全部年份</option>'+
     years.map(y=>`<option>${esc(y)}</option>`).join('');
-  status(); render(true); stats(); buildFix(); runs(); chg();
+  status(); render(true); stats(); buildFix(); runs(); chg(); gha();
   $('#tab-faq').hidden=false;
 }
 </script>

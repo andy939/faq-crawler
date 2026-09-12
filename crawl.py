@@ -40,7 +40,11 @@ CHANGES = os.path.join(DOCS, "changes.csv")
 
 RATE_MS = 333            # 每次請求的間隔。全站約 50 分鐘。
 PROBE_N = 5              # 開跑前探測幾筆
-PROBE_LIMIT_MS = 800     # 探測中位數超過這個就跳過本次（正在挨罰）
+# 探測中位數超過這個就跳過本次（站方正在挨罰）。
+# GitHub Actions 在美國，光是跨太平洋的來回就 700ms 起跳，用本機的門檻會誤判：
+# 2026-09-12 第一次在 GitHub 上跑，探測 755ms，離 800ms 只差 45ms。
+# 挨罰時是 +2000ms 以上，所以放寬到 1800ms 仍然抓得到。
+PROBE_LIMIT_MS = 1800 if os.environ.get("GITHUB_ACTIONS") else 800
 ABORT_AFTER_BLOCKS = 5   # 連續被擋這麼多次就停，不硬衝
 MAX_GONE_CHECK = 60      # 不在清單裡的超過這個數，當作清單沒抓完整，不判下架
 TIMEOUT = 30
