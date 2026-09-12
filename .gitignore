@@ -23,3 +23,7 @@ __pycache__/
 # 系統
 .DS_Store
 Thumbs.db
+
+# 產生物
+report.md
+*.xlsx

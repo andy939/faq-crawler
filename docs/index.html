@@ -100,6 +100,31 @@ td.t{white-space:normal;max-width:460px}
 .row .b{height:7px;background:var(--accent);border-radius:2px;opacity:.75}
 #loading{padding:40px 0;color:var(--dim);text-align:center}
 .err{color:var(--bad)}
+/* 本機控制台 */
+.ctl{display:flex;flex-wrap:wrap;gap:10px;align-items:flex-end}
+.ctl label{display:flex;flex-direction:column;gap:4px;font-size:12px;
+  color:var(--dim)}
+.ctl select,.ctl input{font:inherit;font-size:14px;padding:6px 9px;
+  border:1px solid var(--line);border-radius:7px;background:var(--panel);
+  color:var(--ink)}
+.btn.go{background:var(--accent);color:#fff;border-color:var(--accent);
+  font-weight:600;padding:8px 20px}
+.btn.go:hover{opacity:.9}
+.btn.stop{background:#f0c9c4;border-color:#e0b0a8;color:#7a2a22}
+.btn.stop:disabled{opacity:.45;cursor:default}
+@media (prefers-color-scheme:dark){
+  .btn.stop{background:#4a2a26;border-color:#6a3a34;color:#f0c9c4}}
+.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(118px,1fr));
+  gap:1px;background:var(--line);border:1px solid var(--line);
+  border-radius:8px;overflow:hidden;margin-top:14px}
+.cards div{background:var(--panel);padding:9px 12px}
+.cards b{display:block;font-size:17px;font-weight:600;
+  font-variant-numeric:tabular-nums;line-height:1.3}
+.cards span{font-size:11px;color:var(--dim)}
+#p-bar{height:5px;background:var(--line);border-radius:3px;margin-top:10px;
+  overflow:hidden}
+#p-bar i{display:block;height:100%;width:0;background:var(--accent);
+  transition:width .3s}
 #plog{background:var(--bg);border:1px solid var(--line);border-radius:6px;
   padding:9px 11px;margin:10px 0 0;max-height:300px;overflow:auto;
   font:12.5px/1.6 var(--mono);white-space:pre-wrap;word-break:break-all}
@@ -193,13 +218,41 @@ td.t{white-space:normal;max-width:460px}
   <section id="tab-runs" hidden>
     <!-- 只有用「啟動.bat」在本機打開才會出現；GitHub Pages 上是唯讀的 -->
     <div class="card" style="margin-bottom:16px" id="panel" hidden>
-      <h4 style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
-        本機控制台
-        <select id="pmode" style="font-size:13px;padding:4px 8px"></select>
-        <button class="btn" id="prun" style="padding:4px 12px;font-size:13px">
-          ▶ 開始抓取</button>
-        <span id="pstat" class="count" style="margin:0"></span>
-      </h4>
+      <h4>抓取</h4>
+      <div class="ctl">
+        <label>抓法<select id="p-method"></select></label>
+        <label>模式<select id="p-mode">
+          <option value="fill">補齊（官網幾筆就抓幾筆）</option>
+          <option value="refresh">補齊＋複查 300 筆</option>
+          <option value="full">全站重抓</option>
+          <option value="dry">試跑，不寫檔</option>
+        </select></label>
+        <label>筆數<input id="p-limit" type="number" min="0" placeholder="全部"
+          style="width:90px"></label>
+        <label>發布日期 從<input id="p-from" type="date"></label>
+        <label>到<input id="p-to" type="date"></label>
+        <label>限速（每筆間隔）<select id="p-rate">
+          <option value="0">0 ms　不限速</option>
+          <option value="200">200 ms ≈ 5 req/s</option>
+          <option value="333" selected>333 ms ≈ 3 req/s　★建議</option>
+          <option value="500">500 ms ≈ 2 req/s</option>
+          <option value="1000">1000 ms ≈ 1 req/s</option>
+        </select></label>
+        <button class="btn go" id="p-run">開始抓取</button>
+        <button class="btn stop" id="p-stop" disabled>停止</button>
+      </div>
+      <p class="note" id="p-hint" style="margin:8px 0 0"></p>
+
+      <div class="cards" id="p-cards"></div>
+
+      <div class="ctl" style="margin-top:14px;align-items:baseline">
+        <b style="font-size:13px;color:var(--dim)">工具</b>
+        <span class="note" style="margin:0">不用開命令列，按鈕就能跑</span>
+        <span id="p-tools"></span>
+      </div>
+
+      <p class="count" id="p-stat" style="margin:10px 0 0"></p>
+      <div id="p-bar" hidden><i></i></div>
       <pre id="plog" hidden></pre>
     </div>
 
@@ -565,7 +618,9 @@ $('#fcsv').onclick=()=>download(
 // ---- 本機控制台 ------------------------------------------------------------
 // 用「啟動.bat」打開時，工作台.py 會回應 /api/ping，這塊才會出現。
 // 放在 GitHub Pages 上時那支是 404，網頁就只是唯讀的監控頁。
-let POLL, SEEN=0;
+let POLL, SEEN=0, METHODS={};
+const MB = b => (b||0)/1048576;
+
 async function localPanel(){
   let info;
   try{
@@ -573,17 +628,66 @@ async function localPanel(){
     if(!r.ok) return; info=await r.json();
   }catch(e){ return; }              // 不是本機，安靜地跳過
   $('#panel').hidden=false;
-  $('#pmode').innerHTML=info.modes
-    .map(m=>`<option value="${esc(m.key)}">${esc(m.label)}</option>`).join('');
-  $('#prun').onclick=async()=>{
-    $('#prun').disabled=true;
-    const r=await fetch('api/run?mode='+$('#pmode').value,{method:'POST'});
-    const j=await r.json();
-    if(!j.ok){ $('#pstat').textContent=j.msg; $('#prun').disabled=false; return; }
-    SEEN=0; $('#plog').hidden=false; $('#plog').textContent='';
-    poll();
+  METHODS=Object.fromEntries(info.methods.map(m=>[m.key,m]));
+  $('#p-method').innerHTML=info.methods
+    .map(m=>`<option value="${esc(m.key)}">${esc(m.key)}・${esc(m.label)}</option>`)
+    .join('');
+  $('#p-method').value='B';
+  $('#p-tools').innerHTML=info.tools.map(t=>
+    `<button class="btn tool" data-k="${esc(t.key)}"
+      style="padding:6px 12px;font-size:13px">${esc(t.label)}</button>`).join(' ');
+  $('#p-tools').onclick=e=>{
+    const b=e.target.closest('[data-k]'); if(b) go('api/tool?key='+b.dataset.k);
   };
+  $('#p-method').onchange=hint; $('#p-rate').onchange=hint;
+  $('#p-limit').oninput=hint; hint();
+
+  $('#p-run').onclick=()=>{
+    const q=new URLSearchParams({
+      mode:$('#p-mode').value, method:$('#p-method').value,
+      limit:$('#p-limit').value||'', from:$('#p-from').value||'',
+      to:$('#p-to').value||'', rate:$('#p-rate').value});
+    go('api/run?'+q);
+  };
+  $('#p-stop').onclick=()=>fetch('api/stop',{method:'POST'});
+  cards({});
   poll();                            // 進來時若已經有一輪在跑，接著顯示
+}
+
+function hint(){
+  const m=METHODS[$('#p-method').value]||{};
+  const rate=+$('#p-rate').value, n=+$('#p-limit').value||0;
+  let s=esc(m.desc||'');
+  if(rate) s+=`　限速 ${rate}ms（約 ${(1000/rate).toFixed(1)} req/s）`;
+  else s+='　不限速 ← 只在測試用，平常別這樣對人家的伺服器';
+  if(n&&rate) s+=`　→ ${n} 筆至少需要 ${Math.round(n*rate/1000)} 秒`;
+  $('#p-hint').innerHTML=s;
+}
+
+async function go(url){
+  $('#p-run').disabled=true;
+  const j=await (await fetch(url,{method:'POST'})).json();
+  if(!j.ok){ $('#p-stat').textContent=j.msg; $('#p-run').disabled=false; return; }
+  SEEN=0; $('#plog').hidden=false; $('#plog').textContent='';
+  delete $('#p-stat').dataset.done;
+  poll();
+}
+
+// 八個指標卡，跟舊工作台同一組數字
+function cards(m){
+  const el=(m.elapsed||0), done=m.done||0, reqs=m.reqs||0;
+  const v=[
+    [el?el.toFixed(1)+'s':'—','總耗時'],
+    [done?Math.round(el*1000/done)+'ms':'—','平均每筆'],
+    [el?(reqs/el).toFixed(1):'—','請求 / 秒'],
+    [m.wire?MB(m.wire).toFixed(1)+'MB':'—','實際下載'],
+    [m.raw?MB(m.raw).toFixed(1)+'MB':'—','網頁原始量'],
+    [m.kept?(m.kept/1024).toFixed(0)+'KB':'—','留下的欄位'],
+    [reqs&&m.t_wait?Math.round(m.t_wait*1000/reqs)+'ms':'—','每筆等伺服器'],
+    [reqs&&m.t_read?Math.round(m.t_read*1000/reqs)+'ms':'—','每筆傳輸'],
+  ];
+  $('#p-cards').innerHTML=v.map(([a,b])=>
+    `<div><b>${a}</b><span>${b}</span></div>`).join('');
 }
 
 async function poll(){
@@ -597,15 +701,24 @@ async function poll(){
     $('#plog').scrollTop=$('#plog').scrollHeight;
     SEEN=s.total;
   }
-  $('#prun').disabled=s.running;
-  $('#pstat').textContent = s.running
-    ? `${s.mode} 執行中… ${s.elapsed} 秒`
-    : (s.mode ? `${s.mode} 已結束（${s.elapsed} 秒）` : '');
+  const m=s.metrics||{};
+  cards({...m, elapsed:s.running?s.elapsed:(m.elapsed||s.elapsed)});
+  $('#p-run').disabled=s.running;
+  $('#p-stop').disabled=!s.running;
+  const prog=m.total?Math.round((m.done||0)/m.total*100):0;
+  $('#p-bar').hidden=!s.running;
+  $('#p-bar').firstElementChild.style.width=prog+'%';
+  $('#p-stat').textContent = s.running
+    ? `${s.label} 執行中… ${s.elapsed} 秒`
+      + (m.total?`　${m.done||0}/${m.total}`:'')
+      + (m.eta?`　剩約 ${m.eta>90?(m.eta/60).toFixed(1)+' 分':Math.round(m.eta)+' 秒'}`:'')
+      + (m.blocked?`　被擋 ${m.blocked} 次`:'')
+    : (s.label ? `${s.label} 已結束（${s.elapsed} 秒）` : '');
   if(s.running){ POLL=setTimeout(poll, 700); return; }
-  if(s.code!==null && !$('#pstat').dataset.done){
+  if(s.code!==null && !$('#p-stat').dataset.done){
     // 跑完了，資料檔已經換掉，重新載入才看得到新內容
-    $('#pstat').dataset.done='1';
-    $('#pstat').innerHTML+='　<a href="#" onclick="location.reload();return false">'+
+    $('#p-stat').dataset.done='1';
+    $('#p-stat').innerHTML+='　<a href="#" onclick="location.reload();return false">'+
       '重新載入資料 ↻</a>';
   }
 }

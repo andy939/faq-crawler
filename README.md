@@ -9,7 +9,7 @@ GitHub Actions 定時更新，GitHub Pages 有一個查詢兼評估的網頁工�
 
 ---
 
-## 整包只有五個檔案
+## 檔案
 
 | 檔案 | 用途 |
 |---|---|
@@ -17,7 +17,10 @@ GitHub Actions 定時更新，GitHub Pages 有一個查詢兼評估的網頁工�
 | `faqlib.py` | 站台常數與 HTML 解析。**要改解析邏輯就改這一個檔案** |
 | `工作台.py` | 本機伺服器。讓網頁上的按鈕可以真的按下去抓（雙擊 `啟動.bat` 就是跑它） |
 | `docs/index.html` | 網頁工作台（查詢、概況、維護建議、執行紀錄、異動紀錄） |
-| `docs/faq.json` | **資料本體**。8,304 筆，一筆一行 |
+| `docs/faq.json` | **資料本體**。8,304 筆，一筆一行（純文字） |
+| `docs/faq_html.json` | **原始 HTML**。超連結、表格、換行靠這份還原 |
+| `report.py` | 把歷次測量整理成 `report.md` |
+| `to_excel.py` | 輸出 Excel（問答、維護建議、機關統計、執行紀錄、圖表） |
 | `.github/workflows/crawl.yml` | GitHub 上的自動與手動執行 |
 
 `docs/` 底下另外兩個檔案是程式自己寫的：`meta.json`（現況摘要）、
@@ -65,9 +68,27 @@ python crawl.py --dry-run  # 只看會做什麼，不寫檔
 跑完 commit + push，GitHub 上的網頁就更新了。
 
 **雙擊 `啟動.bat`** 會開本機工作台 <http://127.0.0.1:8765>，
-跟 GitHub Pages 上是同一個網頁，但多一塊**本機控制台**：
-選模式、按「▶ 開始抓取」，抓取進度即時顯示在網頁上，跑完按重新載入就看到新資料。
+跟 GitHub Pages 上是同一個網頁，但多一整塊控制台：
+
+- 選**抓法 A～F**、模式、筆數、發布日期區間、限速，按「開始抓取」
+- 八個指標即時跳動：總耗時、平均每筆、請求/秒、實際下載、網頁原始量、
+  留下的欄位、每筆等伺服器、每筆傳輸
+- 跑到一半可以**停止** —— 是好好地停，已抓到的會存檔
+- 工具按鈕：環境檢查、補齊、全站重抓、產生分析報表、產生 Excel
+
 （GitHub Pages 上沒有這塊 —— 靜態網頁沒有後端，按不動。）
+
+效能測試也可以直接下命令列：
+
+```bash
+python crawl.py --method E --limit 500     # 抓法 E 抓 500 筆
+python crawl.py --method C --limit 500     # 換 C 再跑一次來比
+python report.py                           # 整理成 report.md
+python to_excel.py                         # 輸出 Excel
+```
+
+每次測試的逐筆原始測量會存一份到 `exports/`，檔名帶日期與抓法。
+`faq.json` 會被後續執行覆蓋，那份不會 —— 想到新的分析角度重算就好，不用重爬。
 
 ---
 
