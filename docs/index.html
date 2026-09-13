@@ -211,6 +211,42 @@ mark{background:#ffe9a8;border-radius:2px}
   </div>
 </div>
 
+<!-- ===== 資料 · 篩選與匯出（一筆一列，每個欄位都列出來）===== -->
+<div class="card">
+  <h2>資料 · 篩選與匯出</h2>
+  <div class="row">
+    <div><label>發布時間 從</label><input id="d1" type="date"></div>
+    <div><label>到</label><input id="d2" type="date"></div>
+    <div><label>關鍵字（標題／內容／機關）</label>
+         <input id="dq" type="search" style="width:220px"></div>
+    <button class="ghost" id="fil">篩選</button>
+    <button class="ghost" id="clr">清除</button>
+    <span style="flex:1"></span>
+    <button class="ghost" id="xls" hidden>匯出 Excel</button>
+    <button class="ghost" id="dcsv">匯出 CSV</button>
+    <button class="ghost" id="jsn">匯出 JSON</button>
+  </div>
+  <div class="hint"><span class="badge" id="cnt">–</span>
+    <span id="bytesum"></span></div>
+  <div class="wrap" style="margin-top:10px">
+    <table><thead><tr>
+      <th>發布時間</th><th>更新時間</th><th>檢視時間</th><th>下版日期</th>
+      <th>標題</th><th>發布機關</th>
+      <th class="num sep">抓下<br>
+        <span style="font-weight:400;color:#9aa2ac">byte</span></th>
+      <th class="num">需要<br>
+        <span style="font-weight:400;color:#9aa2ac">byte</span></th>
+      <th>內容</th>
+    </tr></thead><tbody id="tb"></tbody></table>
+  </div>
+  <div class="hint">
+    「抓下」是這一筆真正流過網路的位元組（gzip 壓縮後的整頁 HTML），
+    「需要」是這幾個欄位加起來的 UTF-8 位元組。兩者相差約 100 倍 ——
+    那 54 KB 的版型骨架跟內容一個字都沒關係。
+    抓下 byte 來自 <code>exports/</code> 的逐筆測量，只有本機工作台看得到。
+  </div>
+</div>
+
 <!-- ===== 資料 ===== -->
 <div class="card">
   <nav>
@@ -388,7 +424,8 @@ function init(){
     .sort().reverse();
   $('#year').innerHTML='<option value="">全部年份</option>'+
     years.map(y=>`<option>${esc(y)}</option>`).join('');
-  render(true); stats(); buildFix(); runsTable(); changes(); gha(); local();
+  render(true); stats(); buildFix(); runsTable(); changes(); dataTable();
+  gha(); local();
   $('#tab-faq').hidden=false;
 }
 
@@ -675,6 +712,81 @@ function changes(){
 }
 $('#cf2').onchange=changes;
 
+// ---- 資料 · 篩選與匯出（一筆一列）------------------------------------------
+// 「需要 byte」＝那幾個要留的欄位的 UTF-8 長度，跟 crawl.py 算的是同一組欄位。
+// 「抓下 byte」是抓取當下的量測，存在 exports/ 裡，本機工作台才拿得到。
+const ENC=new TextEncoder();
+const NEEDF=['published','updated','reviewed','expire','title','dept','answer'];
+const needBytes=r=>NEEDF.reduce((s,k)=>s+ENC.encode(r[k]||'').length,0);
+let WIRE={}, DROWS=[];
+
+function dataRows(){
+  const a=$('#d1').value, b=$('#d2').value, q=norm($('#dq').value.trim());
+  return ALL.filter(r=>{
+    const d=(r.published||'').slice(0,10);
+    if(a && d<a) return false;
+    if(b && d>b) return false;
+    if(q && !(norm(r.title).includes(q)||norm(r.answer).includes(q)||
+              norm(r.dept).includes(q))) return false;
+    return true;
+  }).sort((x,y)=>(y.published||'').localeCompare(x.published||''));
+}
+const med=a=>{const s=[...a].sort((x,y)=>x-y);return s.length?s[s.length>>1]:0;};
+
+function dataTable(){
+  DROWS=dataRows();
+  $('#cnt').textContent=`符合 ${nf(DROWS.length)} 筆`;
+  const nd=DROWS.map(needBytes).filter(Boolean);
+  const wr=DROWS.map(r=>WIRE[r.sid]).filter(Boolean);
+  $('#bytesum').innerHTML = nd.length
+    ? (wr.length?`　抓下 中位 <b>${nf(med(wr))}</b> byte`
+        +`（${nf(Math.min(...wr))}~${nf(Math.max(...wr))}）`:'')
+      +`　需要 中位 <b>${nf(med(nd))}</b> byte`
+      +`（${nf(Math.min(...nd))}~${nf(Math.max(...nd))}）`
+      +(wr.length?`　中位浪費 <b>${Math.round(med(wr)/med(nd))} 倍</b>`:'')
+    : '';
+  $('#tb').innerHTML=DROWS.slice(0,300).map(r=>`<tr>
+      <td>${esc((r.published||'').slice(0,10))}</td>
+      <td>${esc(r.updated||'')}</td>
+      <td>${esc(r.reviewed)||NA}</td>
+      <td>${esc(r.expire)||NA}</td>
+      <td class="t"><a href="${esc(r.url)}" target="_blank"
+        rel="noopener">${esc(r.title)}</a></td>
+      <td>${esc(r.dept||'')}</td>
+      <td class="num sep">${WIRE[r.sid]?nf(WIRE[r.sid]):NA}</td>
+      <td class="num">${nf(needBytes(r))}</td>
+      <td class="t" style="color:#3c434c">${esc((r.answer||'').slice(0,140))}${
+        (r.answer||'').length>140?'…':''}</td>
+    </tr>`).join('')
+    ||'<tr><td colspan="9" style="color:#9aa2ac">沒有資料</td></tr>';
+  if(DROWS.length>300)
+    $('#tb').innerHTML+='<tr><td colspan="9" style="color:#9aa2ac">'+
+      `…只顯示前 300 筆，其餘請匯出（共 ${nf(DROWS.length)} 筆）</td></tr>`;
+}
+$('#fil').onclick=dataTable;
+$('#clr').onclick=()=>{$('#d1').value=$('#d2').value=$('#dq').value='';dataTable();};
+const flat=()=>DROWS.map(r=>({
+  發布時間:(r.published||'').slice(0,10), 更新時間:r.updated||'',
+  檢視時間:r.reviewed||'', 下版日期:r.expire||'', 標題:r.title,
+  發布機關:r.dept||'', 維護單位:r.maintainer||'',
+  抓下byte:WIRE[r.sid]||'', 需要byte:needBytes(r),
+  內容:(r.answer||'').replace(/\s+/g,' '),
+  附件:(r.files||[]).map(f=>f.name).join(' | '),
+  類型:r.kind==='external'?'外部連結':'站內', 已下架:r.gone||'',
+  網址:r.url, sid:r.sid}));
+const DCOLS=['發布時間','更新時間','檢視時間','下版日期','標題','發布機關',
+  '維護單位','抓下byte','需要byte','內容','附件','類型','已下架','網址','sid'];
+$('#dcsv').onclick=()=>download(
+  `常見問答_${new Date().toISOString().slice(0,10)}_${DROWS.length}筆.csv`,
+  toCSV(flat(), DCOLS));
+$('#jsn').onclick=()=>{
+  const a=document.createElement('a');
+  a.href=URL.createObjectURL(new Blob([JSON.stringify(flat(),null,1)],
+    {type:'application/json'}));
+  a.download=`常見問答_${new Date().toISOString().slice(0,10)}.json`;
+  a.click(); URL.revokeObjectURL(a.href);
+};
+
 // ---- GitHub Actions 現況（公開 API，不需要登入）----------------------------
 const DOT={success:['✔','var(--deep)'], failure:['✖','var(--danger)'],
            cancelled:['■','var(--dim)'], skipped:['–','var(--dim)'],
@@ -725,6 +837,10 @@ async function local(){
     if(!r.ok) return; info=await r.json();
   }catch(e){ return; }
   $('#panel').hidden=false; $('#toolcard').hidden=false;
+  $('#xls').hidden=false;
+  $('#xls').onclick=()=>run('api/tool?key=excel');
+  fetch('api/samples').then(r=>r.json()).then(d=>{WIRE=d.wire||{};dataTable();})
+    .catch(()=>{});
   METHODS=Object.fromEntries(info.methods.map(m=>[m.key,m]));
   $('#m').innerHTML=info.methods.map(m=>
     `<option value="${esc(m.key)}">${esc(m.key)}・${esc(m.label)}</option>`).join('');

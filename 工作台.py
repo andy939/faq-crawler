@@ -153,6 +153,22 @@ def build_args(q):
     return label, args
 
 
+def latest_wire():
+    """從 exports/ 的逐筆測量檔撈出每一筆的「抓下 byte」，新的蓋舊的。"""
+    out = {}
+    try:
+        import csv
+        import glob
+        for p in sorted(glob.glob(os.path.join(HERE, "exports", "*.csv"))):
+            with open(p, encoding="utf-8", newline="") as f:
+                for r in csv.DictReader(f):
+                    if r.get("sid") and r.get("抓下bytes"):
+                        out[r["sid"]] = int(float(r["抓下bytes"]))
+    except Exception:
+        pass
+    return out
+
+
 class Handler(SimpleHTTPRequestHandler):
     def __init__(self, *a, **k):
         super().__init__(*a, directory=DOCS, **k)
@@ -183,6 +199,11 @@ class Handler(SimpleHTTPRequestHandler):
         if path == "/api/log":
             since = int(q.get("since", ["0"])[0] or 0)
             return self._json(JOB.state(since))
+        if path == "/api/samples":
+            # 逐筆的「抓下 byte」只存在 exports/ 的測量檔裡（那是每次抓取的
+            # 量測值，不是問答本身的屬性，所以沒進 faq.json）。
+            # 網頁那張逐筆表要顯示它，就從最近的測量檔撈出來，新的蓋舊的。
+            return self._json({"wire": latest_wire()})
         return super().do_GET()
 
     def do_POST(self):
