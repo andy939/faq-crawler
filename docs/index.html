@@ -223,8 +223,6 @@ mark{background:#ffe9a8;border-radius:2px}
     <button class="ghost" id="clr">清除</button>
     <span style="flex:1"></span>
     <button class="ghost" id="xls" hidden>匯出 Excel</button>
-    <button class="ghost" id="dcsv">匯出 CSV</button>
-    <button class="ghost" id="jsn">匯出 JSON</button>
   </div>
   <div class="hint"><span class="badge" id="cnt">–</span>
     <span id="bytesum"></span></div>
@@ -765,28 +763,6 @@ function dataTable(){
 }
 $('#fil').onclick=dataTable;
 $('#clr').onclick=()=>{$('#d1').value=$('#d2').value=$('#dq').value='';dataTable();};
-const flat=()=>DROWS.map(r=>({
-  發布時間:(r.published||'').slice(0,10), 更新時間:r.updated||'',
-  檢視時間:r.reviewed||'', 下版日期:r.expire||'', 標題:r.title,
-  發布機關:r.dept||'', 維護單位:r.maintainer||'',
-  抓下byte:WIRE[r.sid]||'', 需要byte:needBytes(r),
-  內容:(r.answer||'').replace(/\s+/g,' '),
-  附件:(r.files||[]).map(f=>f.name).join(' | '),
-  類型:r.kind==='external'?'外部連結':'站內', 已下架:r.gone||'',
-  網址:r.url, sid:r.sid}));
-const DCOLS=['發布時間','更新時間','檢視時間','下版日期','標題','發布機關',
-  '維護單位','抓下byte','需要byte','內容','附件','類型','已下架','網址','sid'];
-$('#dcsv').onclick=()=>download(
-  `常見問答_${new Date().toISOString().slice(0,10)}_${DROWS.length}筆.csv`,
-  toCSV(flat(), DCOLS));
-$('#jsn').onclick=()=>{
-  const a=document.createElement('a');
-  a.href=URL.createObjectURL(new Blob([JSON.stringify(flat(),null,1)],
-    {type:'application/json'}));
-  a.download=`常見問答_${new Date().toISOString().slice(0,10)}.json`;
-  a.click(); URL.revokeObjectURL(a.href);
-};
-
 // ---- GitHub Actions 現況（公開 API，不需要登入）----------------------------
 const DOT={success:['✔','var(--deep)'], failure:['✖','var(--danger)'],
            cancelled:['■','var(--dim)'], skipped:['–','var(--dim)'],
