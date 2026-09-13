@@ -448,6 +448,14 @@ class Fetcher:
         need = sum(len((rec.get(k) or "").encode("utf-8"))
                    for k in ("published", "updated", "reviewed", "expire",
                              "title", "dept", "answer"))
+        # 這一筆的位元帳，跟著資料一起存：
+        #   抓下＝真正流過網路的（gzip 壓縮後的整頁）
+        #   原始＝解壓後的完整 HTML
+        #   需要＝上面那幾個欄位加起來的 UTF-8 長度
+        # 三個擺在一起才看得出「抓了一整頁，真正要的只有幾百 bytes」。
+        rec["bytes_wire"] = wire
+        rec["bytes_raw"] = raw
+        rec["bytes_needed"] = need
         sample = {
             "sid": rec["sid"], "no": item.get("no", ""),
             "抓法": self.method, "併發": self.workers,

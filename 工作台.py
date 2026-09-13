@@ -199,6 +199,25 @@ class Handler(SimpleHTTPRequestHandler):
         if path == "/api/log":
             since = int(q.get("since", ["0"])[0] or 0)
             return self._json(JOB.state(since))
+        if path == "/api/download":
+            # 讓網頁把產生的 Excel／報表直接下載回去，不用自己去翻資料夾。
+            # 只給專案根目錄下的 .xlsx / .md，而且不接受路徑分隔符。
+            name = os.path.basename(q.get("name", [""])[0])
+            full = os.path.join(HERE, name)
+            if (not name or os.sep in name or not os.path.isfile(full)
+                    or os.path.splitext(name)[1].lower() not in (".xlsx", ".md")):
+                return self.send_error(404)
+            with open(full, "rb") as f:
+                body = f.read()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/octet-stream")
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Content-Disposition",
+                             "attachment; filename*=UTF-8''"
+                             + urllib.parse.quote(name))
+            self.end_headers()
+            self.wfile.write(body)
+            return
         if path == "/api/samples":
             # 逐筆的「抓下 byte」只存在 exports/ 的測量檔裡（那是每次抓取的
             # 量測值，不是問答本身的屬性，所以沒進 faq.json）。

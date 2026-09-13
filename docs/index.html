@@ -223,6 +223,7 @@ mark{background:#ffe9a8;border-radius:2px}
     <button class="ghost" id="clr">清除</button>
     <span style="flex:1"></span>
     <button class="ghost" id="xls" hidden>匯出 Excel</button>
+    <span class="hint" id="xlsmsg" style="margin:0;align-self:center"></span>
   </div>
   <div class="hint"><span class="badge" id="cnt">–</span>
     <span id="bytesum"></span></div>
@@ -231,9 +232,11 @@ mark{background:#ffe9a8;border-radius:2px}
       <th>發布時間</th><th>更新時間</th><th>檢視時間</th><th>下版日期</th>
       <th>標題</th><th>發布機關</th>
       <th class="num sep">抓下<br>
-        <span style="font-weight:400;color:#9aa2ac">byte</span></th>
+        <span style="font-weight:400;color:#9aa2ac">byte・gzip後</span></th>
+      <th class="num">原始<br>
+        <span style="font-weight:400;color:#9aa2ac">byte・解壓後</span></th>
       <th class="num">需要<br>
-        <span style="font-weight:400;color:#9aa2ac">byte</span></th>
+        <span style="font-weight:400;color:#9aa2ac">byte・那幾個欄位</span></th>
       <th>內容</th>
     </tr></thead><tbody id="tb"></tbody></table>
   </div>
@@ -241,7 +244,7 @@ mark{background:#ffe9a8;border-radius:2px}
     「抓下」是這一筆真正流過網路的位元組（gzip 壓縮後的整頁 HTML），
     「需要」是這幾個欄位加起來的 UTF-8 位元組。兩者相差約 100 倍 ——
     那 54 KB 的版型骨架跟內容一個字都沒關係。
-    抓下 byte 來自 <code>exports/</code> 的逐筆測量，只有本機工作台看得到。
+三個數字都跟著每一筆資料存，本機和 GitHub 上看到的一樣。
   </div>
 </div>
 
@@ -713,14 +716,12 @@ $('#cf2').onchange=changes;
 // ---- 資料 · 篩選與匯出（一筆一列）------------------------------------------
 // 「需要 byte」＝那幾個要留的欄位的 UTF-8 長度，跟 crawl.py 算的是同一組欄位。
 // 「抓下 byte」是抓取當下的量測，存在 exports/ 裡，本機工作台才拿得到。
-const ENC=new TextEncoder();
-const NEEDF=['published','updated','reviewed','expire','title','dept','answer'];
-const needBytes=r=>NEEDF.reduce((s,k)=>s+ENC.encode(r[k]||'').length,0);
-let WIRE={}, DROWS=[];
+let DROWS=[];
 
 function dataRows(){
   const a=$('#d1').value, b=$('#d2').value, q=norm($('#dq').value.trim());
   return ALL.filter(r=>{
+    if(r.gone) return false;          // 已下架的不算在官網筆數裡
     const d=(r.published||'').slice(0,10);
     if(a && d<a) return false;
     if(b && d>b) return false;
@@ -734,8 +735,8 @@ const med=a=>{const s=[...a].sort((x,y)=>x-y);return s.length?s[s.length>>1]:0;}
 function dataTable(){
   DROWS=dataRows();
   $('#cnt').textContent=`符合 ${nf(DROWS.length)} 筆`;
-  const nd=DROWS.map(needBytes).filter(Boolean);
-  const wr=DROWS.map(r=>WIRE[r.sid]).filter(Boolean);
+  const nd=DROWS.map(r=>r.bytes_needed).filter(Boolean);
+  const wr=DROWS.map(r=>r.bytes_wire).filter(Boolean);
   $('#bytesum').innerHTML = nd.length
     ? (wr.length?`　抓下 中位 <b>${nf(med(wr))}</b> byte`
         +`（${nf(Math.min(...wr))}~${nf(Math.max(...wr))}）`:'')
@@ -751,14 +752,15 @@ function dataTable(){
       <td class="t"><a href="${esc(r.url)}" target="_blank"
         rel="noopener">${esc(r.title)}</a></td>
       <td>${esc(r.dept||'')}</td>
-      <td class="num sep">${WIRE[r.sid]?nf(WIRE[r.sid]):NA}</td>
-      <td class="num">${nf(needBytes(r))}</td>
+      <td class="num sep">${r.bytes_wire?nf(r.bytes_wire):NA}</td>
+      <td class="num">${r.bytes_raw?nf(r.bytes_raw):NA}</td>
+      <td class="num">${nf(r.bytes_needed||0)}</td>
       <td class="t" style="color:#3c434c">${esc((r.answer||'').slice(0,140))}${
         (r.answer||'').length>140?'…':''}</td>
     </tr>`).join('')
-    ||'<tr><td colspan="9" style="color:#9aa2ac">沒有資料</td></tr>';
+    ||'<tr><td colspan="10" style="color:#9aa2ac">沒有資料</td></tr>';
   if(DROWS.length>300)
-    $('#tb').innerHTML+='<tr><td colspan="9" style="color:#9aa2ac">'+
+    $('#tb').innerHTML+='<tr><td colspan="10" style="color:#9aa2ac">'+
       `…只顯示前 300 筆，其餘請匯出（共 ${nf(DROWS.length)} 筆）</td></tr>`;
 }
 $('#fil').onclick=dataTable;
@@ -814,9 +816,23 @@ async function local(){
   }catch(e){ return; }
   $('#panel').hidden=false; $('#toolcard').hidden=false;
   $('#xls').hidden=false;
-  $('#xls').onclick=()=>run('api/tool?key=excel');
-  fetch('api/samples').then(r=>r.json()).then(d=>{WIRE=d.wire||{};dataTable();})
-    .catch(()=>{});
+  $('#xls').onclick=async()=>{
+    $('#xls').disabled=true;
+    $('#xlsmsg').textContent='產生中…（八千多筆，約 20 秒）';
+    const j=await (await fetch('api/tool?key=excel',{method:'POST'})).json();
+    if(!j.ok){ $('#xlsmsg').textContent=j.msg; $('#xls').disabled=false; return; }
+    const t=setInterval(async()=>{
+      const s=await (await fetch('api/log?since=0',{cache:'no-store'})).json();
+      if(s.running) return;
+      clearInterval(t); $('#xls').disabled=false;
+      // 從輸出裡撈檔名，給一個直接下載的連結
+      const m=(s.lines.join('\n').match(/→ (.+\.xlsx)/)||[])[1];
+      $('#xlsmsg').innerHTML = m
+        ? `完成　<a href="api/download?name=${encodeURIComponent(m)}">下載 ${esc(m)}</a>`
+          + `　（也存在專案資料夾裡）`
+        : '產生失敗，看上面「抓取」那張卡的日誌';
+    }, 1000);
+  };
   METHODS=Object.fromEntries(info.methods.map(m=>[m.key,m]));
   $('#m').innerHTML=info.methods.map(m=>
     `<option value="${esc(m.key)}">${esc(m.key)}・${esc(m.label)}</option>`).join('');

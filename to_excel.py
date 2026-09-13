@@ -138,7 +138,7 @@ def main():
     # ---------- 問答 ----------
     hdr = ["sid", "標題", "發布機關", "發布日期", "更新時間", "檢視時間",
            "下版日期", "維護單位", "內容", "內容字數", "附件數", "附件",
-           "類型", "已下架", "網址"]
+           "抓下byte", "原始byte", "需要byte", "類型", "已下架", "網址"]
     if a.html:
         hdr.append("原始HTML")
     rows = []
@@ -149,13 +149,16 @@ def main():
                r.get("maintainer", ""), r.get("answer", ""),
                len(r.get("answer") or ""), len(r.get("files") or []),
                " | ".join(f["name"] for f in (r.get("files") or [])),
+               r.get("bytes_wire", 0), r.get("bytes_raw", 0),
+               r.get("bytes_needed", 0),
                "外部連結" if r.get("kind") == "external" else "站內",
                r.get("gone", ""), r["url"]]
         if a.html:
             row.append(htmls.get(r["sid"], ""))
         rows.append(row)
     sheet(wb, "問答", hdr, rows,
-          widths=[18, 52, 22, 12, 17, 17, 12, 22, 70, 10, 8, 30, 10, 11, 60])
+          widths=[18, 52, 22, 12, 17, 17, 12, 22, 70, 10, 8, 30,
+                  11, 11, 10, 10, 11, 60])
 
     # ---------- 維護建議 ----------
     titles = Counter((r.get("title") or "").strip() for r in live)
