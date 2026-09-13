@@ -105,8 +105,8 @@ RUN_COLS = ["時間", "來源", "模式", "抓法", "併發", "限速ms", "範�
             "處理筆數", "請求數", "清單請求", "內文請求", "被擋", "錯誤",
             "耗時秒", "每筆毫秒", "請求每秒",
             "等伺服器ms", "傳輸ms", "解析ms",
-            "抓下MB", "原始MB", "需要KB", "壓縮率%", "有效率%",
-            "延遲p50ms", "延遲p95ms", "備註"]
+            "抓下MB", "原始MB", "需要KB", "需要最小B", "需要最大B",
+            "壓縮率%", "有效率%", "延遲p50ms", "延遲p95ms", "備註"]
 
 # 逐筆原始測量的欄位（exports/*.csv）
 SAMPLE_COLS = ["seq", "sid", "no", "抓法", "併發", "標題", "機關",
@@ -912,6 +912,9 @@ def main():
             "抓下MB": round(fe.wire / 1048576, 2),
             "原始MB": round(fe.raw / 1048576, 2),
             "需要KB": round(kept / 1024, 1),
+            # 單筆的最小與最大，網頁那張比較表會印在「需要/筆」下面一行
+            "需要最小B": min((s["需要bytes"] for s in samples), default=""),
+            "需要最大B": max((s["需要bytes"] for s in samples), default=""),
             "壓縮率%": round(fe.wire / fe.raw * 100, 1) if fe.raw else 0,
             "有效率%": round(kept / fe.wire * 100, 2) if fe.wire else 0,
             "延遲p50ms": round(pct(lat, 0.5) * 1000),

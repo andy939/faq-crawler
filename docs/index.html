@@ -182,12 +182,32 @@ mark{background:#ffe9a8;border-radius:2px}
 <!-- ===== 歷次測試 ===== -->
 <div class="card">
   <h2>歷次測試　<span>同樣筆數換不同抓法跑，這裡會累積成比較表</span></h2>
-  <div class="wrap" style="max-height:320px"><table id="t-runs"></table></div>
-  <div class="hint">
-    <b>每筆毫秒</b>＝耗時 ÷ 請求數，是判斷站方有沒有在限流最直接的指標：
-    平常約 130ms，挨罰時會跳到 2000ms 以上。
-    <b>被擋</b>是收到 3 KB 錯誤頁或 403/429/503 的次數 ——
-    那種頁面 HTTP 狀態碼仍然是 200，所以程式是用頁面大小判斷的。
+  <div class="wrap" style="max-height:300px">
+    <table><thead><tr>
+      <th>時間</th><th>抓法</th><th class="num">限速</th><th>範圍</th>
+      <th class="num">筆數</th><th class="num">耗時</th><th class="num">每筆</th>
+      <th class="num sep">等伺服器</th><th class="num">傳輸</th>
+      <th class="num sep">抓下/筆<br>
+        <span style="font-weight:400;color:#9aa2ac">實際下載</span></th>
+      <th class="num">原始HTML/筆<br>
+        <span style="font-weight:400;color:#9aa2ac">解壓後</span></th>
+      <th class="num">壓縮率</th>
+      <th class="num sep">實際需要/筆<br>
+        <span style="font-weight:400;color:#9aa2ac">平均・最小~最大</span></th>
+      <th class="num">有效率</th><th></th>
+    </tr></thead><tbody id="rt"></tbody></table>
+  </div>
+  <div class="row" style="margin-top:10px">
+    <button class="ghost" id="runcsv">匯出測試紀錄 CSV</button>
+    <span style="flex:1"></span>
+    <span style="color:var(--dim);font-size:12.5px">
+      每次執行也會自動存一份逐筆原始資料到 exports/ 資料夾，檔名帶日期時間與抓法</span>
+  </div>
+  <div class="hint" style="margin-top:6px">
+    「等伺服器」= 送出請求到收到第一個位元組（含連線建立與 ASP.NET 產頁）；
+    「傳輸」= 把 body 收完。兩者都是每次請求的平均。
+    「抓下」是真正流過網路的位元組（gzip 壓縮後），「原始HTML」是解壓後的完整頁面
+    —— 關掉 gzip 的抓法這兩欄會一樣。「實際需要」是那幾個要留的欄位。
   </div>
 </div>
 
@@ -585,30 +605,56 @@ $('#fcsv').onclick=()=>download(
   toCSV(fixRows(), ['機關','問題','說明','標題','發布日期','下版日期','最後檢視','網址']));
 
 // ---- 歷次測試 --------------------------------------------------------------
-const NUMCOL=['站上筆數','已下載','缺','新增','異動','下架','復原','處理筆數',
-  '請求數','清單請求','內文請求','被擋','錯誤','耗時秒','每筆毫秒','請求每秒',
-  '等伺服器ms','傳輸ms','解析ms','抓下MB','原始MB','需要KB','壓縮率%','有效率%',
-  '延遲p50ms','延遲p95ms','併發','限速ms'];
+// 單位切換與原本的工作台一樣：10 KB 以下用 B，1 MB 以下用 KB
+const kb = b => b<10240 ? Math.round(b).toLocaleString()+' B'
+             : b<1048576 ? (b/1024).toFixed(1)+' KB'
+                         : (b/1048576).toFixed(1)+' MB';
+const secs = s => s<90 ? s.toFixed(1)+' s'
+                : s<5400 ? (s/60).toFixed(1)+' 分' : (s/3600).toFixed(1)+' 小時';
+const NA='<span style="color:#c3c8ce">–</span>';
+
 function runsTable(){
   const {head,rows}=RUNS;
-  if(!head.length){ $('#t-runs').innerHTML='<tr><td>還沒有執行紀錄</td></tr>'; return; }
-  const ei=head.indexOf('耗時秒');
-  const max=Math.max(1,...rows.map(r=>+r[ei]||0));
-  $('#t-runs').innerHTML=
-    '<tr>'+head.map(c=>`<th class="${NUMCOL.includes(c)?'num':''}">${esc(c)}</th>`)
-      .join('')+'</tr>'+
-    rows.slice(0,80).map(r=>'<tr>'+head.map((c,i)=>{
-      const v=r[i]??'';
-      if(c==='耗時秒'){
-        return `<td class="num"><i style="display:inline-block;height:8px;
-          background:var(--accent);border-radius:2px;margin-right:5px;
-          width:${Math.round((+v||0)/max*50)}px"></i>${esc(v)}</td>`;
-      }
-      const bad=(c==='被擋'&&+v>0)||(c==='缺'&&+v>0)||(c==='錯誤'&&+v>0);
-      return `<td class="${NUMCOL.includes(c)?'num':''}"
-        ${bad?'style="color:var(--danger)"':''}>${esc(v)}</td>`;
-    }).join('')+'</tr>').join('');
+  const tb=$('#rt');
+  const g=(r,c)=>{const i=head.indexOf(c); return i<0?'':(r[i]??'');};
+  const n=(r,c)=>parseFloat(g(r,c))||0;
+  tb.innerHTML=rows.slice(0,80).map(r=>{
+    const d=Math.max(n(r,'處理筆數')||n(r,'已下載'),1);
+    const wire=n(r,'抓下MB')*1048576, raw=n(r,'原始MB')*1048576;
+    const kept=n(r,'需要KB')*1024;
+    // 有效率＝需要 ÷ 實際下載（不是拿原始 HTML 算，否則關掉 gzip 的抓法
+    // 看起來會跟有 gzip 的一樣）
+    const eff=wire?100*kept/wire:0;
+    const lo=g(r,'需要最小B'), hi=g(r,'需要最大B');
+    return `<tr>
+      <td>${esc(g(r,'時間'))}</td>
+      <td>${esc(g(r,'抓法')||g(r,'模式'))}</td>
+      <td class="num">${n(r,'限速ms')?n(r,'限速ms')+' ms'
+        :'<span style="color:#c3c8ce">無</span>'}</td>
+      <td>${esc(g(r,'範圍'))}</td>
+      <td class="num">${nf(d)}</td>
+      <td class="num">${secs(n(r,'耗時秒'))}</td>
+      <td class="num">${nf(g(r,'每筆毫秒'))} ms</td>
+      <td class="num sep">${g(r,'等伺服器ms')?nf(g(r,'等伺服器ms'))+' ms':NA}</td>
+      <td class="num">${g(r,'傳輸ms')?nf(g(r,'傳輸ms'))+' ms':NA}</td>
+      <td class="num sep">${wire?kb(wire/d):NA}</td>
+      <td class="num">${raw?kb(raw/d):NA}</td>
+      <td class="num">${raw?Math.round(100*wire/raw)+'%':NA}</td>
+      <td class="num sep">${kept?kb(kept/d)
+        +(hi?`<br><span style="color:#9aa2ac;font-size:11px">${nf(lo)}~${nf(hi)} B</span>`:'')
+        :NA}</td>
+      <td class="num">${kept?eff.toFixed(2)+'%'
+        +`<br><span style="color:#9aa2ac;font-size:11px">1/${Math.round(wire/kept)}</span>`
+        :NA}</td>
+      <td>${g(r,'備註')?'<span style="color:var(--danger)">中斷</span>':''}</td>
+    </tr>`;}).join('')
+    ||'<tr><td colspan="15" style="color:#9aa2ac">還沒有紀錄</td></tr>';
 }
+$('#runcsv').onclick=()=>download(
+  `執行紀錄_${new Date().toISOString().slice(0,10)}.csv`,
+  '﻿' + [RUNS.head.join(',')].concat(
+    RUNS.rows.map(r=>r.map(v=>'"'+String(v??'').replace(/"/g,'""')+'"').join(','))
+  ).join('\r\n'));
 
 // ---- 異動紀錄 --------------------------------------------------------------
 function changes(){
