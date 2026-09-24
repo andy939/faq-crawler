@@ -36,7 +36,11 @@ TOOLS = {
     "full":   ("全站重抓", [sys.executable, "-u", "crawl.py", "--full"]),
     "report": ("產生分析報表", [sys.executable, "-u", "report.py"]),
     "excel":  ("產生 Excel", [sys.executable, "-u", "to_excel.py"]),
+    "sync":   ("同步到網站", [sys.executable, "-u", "同步網站.py"]),
 }
+
+# 抓完自動接著跑的後續工作（網頁上那個勾選框）
+FOLLOW = {"sync": ("同步到網站", [sys.executable, "-u", "同步網站.py"])}
 
 
 class Job:
@@ -51,12 +55,13 @@ class Job:
         self.cmd = ""
         self.started = 0.0
         self.code = None
+        self.then = None          # 跑完要不要接著做別的（例如同步到網站）
 
     @property
     def running(self):
         return self.proc is not None and self.proc.poll() is None
 
-    def start(self, label, args):
+    def start(self, label, args, then=None):
         with self.lock:
             if self.running:
                 return False, "已經有一輪在跑了"
@@ -66,6 +71,7 @@ class Job:
             self.lines = [f"$ python {' '.join(args[2:])}".rstrip()]
             self.metrics = {}
             self.label, self.started, self.code = label, time.time(), None
+            self.then = then
             env = dict(os.environ, CRAWL_JSON="1", PYTHONIOENCODING="utf-8")
             self.proc = subprocess.Popen(
                 args, cwd=HERE, stdout=subprocess.PIPE,
@@ -103,6 +109,19 @@ class Job:
         self.lines.append(
             f"—— 結束（{'成功' if self.code == 0 else f'離開碼 {self.code}'}），"
             f"共 {el:.0f} 秒 ——")
+        # 抓完自動接著同步（網頁勾了「抓完自動同步」才會有）。
+        # 只有順利跑完才接 —— 被中斷或挨罰跳過的那輪，資料不完整，
+        # 不該把它推到公開網站上。
+        if self.then and self.code == 0:
+            nxt, self.then = self.then, None
+            prev = self.lines
+            self.lines = prev + ["", "—— 接著自動同步到網站 ——"]
+            keep = self.lines
+            self.start(*nxt)
+            self.lines = keep + self.lines[1:]
+        elif self.then:
+            self.then = None
+            self.lines.append("（這輪沒有順利跑完，不自動同步）")
 
     def state(self, since=0):
         return {
@@ -241,7 +260,8 @@ class Handler(SimpleHTTPRequestHandler):
             return self._json({"ok": ok, "msg": msg}, 200 if ok else 409)
         if path == "/api/run":
             label, args = build_args(q)
-            ok, msg = JOB.start(label, args)
+            then = FOLLOW["sync"] if q.get("sync", [""])[0] == "1" else None
+            ok, msg = JOB.start(label, args, then)
             return self._json({"ok": ok, "msg": msg}, 200 if ok else 409)
         return self.send_error(404)
 

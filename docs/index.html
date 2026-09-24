@@ -142,6 +142,9 @@ mark{background:#ffe9a8;border-radius:2px}
         <option value="500">500 ms　≈ 2 req/s</option>
         <option value="1000">1000 ms　≈ 1 req/s</option>
       </select></div>
+    <label style="margin:0 0 6px;display:flex;align-items:center;gap:5px;
+                  font-size:13px;color:var(--ink)">
+      <input type="checkbox" id="autosync"> 抓完自動同步到網站</label>
     <button id="go">開始抓取</button>
     <button id="recon" class="ghost">清單對帳</button>
     <button id="stop" class="ghost stop" disabled>停止</button>
@@ -879,7 +882,8 @@ async function local(){
   $('#n').oninput=desc; desc();
   $('#go').onclick=()=>run('api/run?'+new URLSearchParams({
     mode:$('#mode').value, method:$('#m').value, limit:$('#n').value||'',
-    from:$('#cf').value||'', to:$('#ct').value||'', rate:$('#iv').value}));
+    from:$('#cf').value||'', to:$('#ct').value||'', rate:$('#iv').value,
+    sync:$('#autosync').checked?'1':''}));
   // 清單對帳＝整份清單抓下來跟手上的資料比，官網幾筆就補到幾筆
   $('#recon').onclick=()=>run('api/run?mode=fill&method=B');
   $('#stop').onclick=()=>fetch(api('stop'),{method:'POST'});

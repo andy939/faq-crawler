@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
 """
-把抓下來的資料轉成「臺北市 FAQ 搜尋站」（andy939/taipei-faq-search）的格式。
+把抓下來的資料轉成兩個既有網站吃的格式。
 
-    python 匯出到搜尋站.py                    # 輸出到 _site_faq_out/data/
-    python 匯出到搜尋站.py --out 別的資料夾
-    python 匯出到搜尋站.py --old 舊的 data 資料夾
+    python 匯出到網站.py --target search   # andy939/taipei-faq-search
+    python 匯出到網站.py --target ms       # andy939/1999-mystery-shopper
+
+兩個站的資料都是 2026-09-04 從 xlsx 手動匯出的 8,317 筆，這支程式讓它們
+可以直接吃爬蟲的資料。
 
 那個站的資料長這樣（index 一個檔、答案切片存）：
 
@@ -29,6 +31,9 @@ import re
 import time
 
 import crawl as C
+
+OLD_SEARCH = r"D:\ai_work\1150907秘密客\_site_faq\data"
+OLD_MS = r"D:\ai_work\1150907秘密客\_site_ms\data"
 
 SHARD = 347                     # 每片幾筆，沿用原本的設定
 DEFAULT_OLD = r"D:\ai_work\1150907秘密客\_site_faq\data"
@@ -69,11 +74,92 @@ def short_name(full, table):
     return m.group(1) if m else s
 
 
+def export_ms(out, old):
+    """1999 秘密客站的格式：照機關分片。
+
+        data/index.json  {generated, source, n, linkPrefix, units[], orgs[]}
+        orgs[i] = {o: 機關簡稱, f: "org-00",
+                   items: [[標題, units的索引, 發布日期, 點閱數, sid, 分類], ...]}
+        data/org-NN.json = 那個機關的答案，順序跟 items 對齊
+
+    兩個欄位我們沒有，要沿用舊資料（都用完整 sid 對）：
+      點閱數  爬蟲沒抓（要另外打八千多次 GetCounter.ashx）
+      分類    17 種人工分類（勞工權益、交通停車…），不是站上的欄位
+    """
+    f = os.path.join(old, "index.json")
+    if not os.path.exists(f):
+        raise SystemExit(f"找不到舊索引 {f}")
+    with open(f, encoding="utf-8") as fh:
+        old_idx = json.load(fh)
+
+    hits, cats, short_tbl = {}, {}, {}
+    for og in old_idx["orgs"]:
+        for it in og["items"]:
+            hits[it[4]] = it[3]                       # sid → 點閱數
+            cats[it[4]] = it[5]                       # sid → 分類
+            short_tbl[old_idx["units"][it[1]]] = og["o"]   # 機關全名 → 簡稱
+    print(f"舊索引：{old_idx['n']} 筆、{len(old_idx['orgs'])} 個機關、"
+          f"{len(cats)} 筆有分類")
+
+    recs = C.load_data()
+    live = [r for r in recs.values() if not r.get("gone")]
+    by_org = {}
+    for r in live:
+        by_org.setdefault(short_name(r.get("dept") or "", short_tbl), []).append(r)
+
+    units, uidx = [], {}
+    orgs, answers, nocat = [], [], 0
+    for i, (org, rs) in enumerate(
+            sorted(by_org.items(), key=lambda kv: -len(kv[1]))):
+        rs.sort(key=lambda r: -hits.get(r["sid"], 0))   # 熱門排前面
+        items = []
+        for r in rs:
+            dept = r.get("dept") or ""
+            if dept not in uidx:
+                uidx[dept] = len(units)
+                units.append(dept)
+            cat = cats.get(r["sid"], "")
+            nocat += not cat
+            items.append([r.get("title") or "", uidx[dept],
+                          (r.get("published") or "")[:10],
+                          hits.get(r["sid"], 0), r["sid"], cat or "其他綜合"])
+        orgs.append({"o": org, "f": f"org-{i:02d}", "items": items})
+        answers.append([r.get("answer") or "" for r in rs])
+
+    d = os.path.join(out, "data")
+    os.makedirs(d, exist_ok=True)
+    idx = {"generated": time.strftime("%Y-%m-%d"),
+           "source": "faq-crawler docs/faq.json",
+           "n": len(live), "linkPrefix": old_idx["linkPrefix"],
+           "units": units, "orgs": orgs}
+    with open(os.path.join(d, "index.json"), "w",
+              encoding="utf-8", newline="\n") as fh:
+        json.dump(idx, fh, ensure_ascii=False, separators=(",", ":"))
+    for i, ans in enumerate(answers):
+        with open(os.path.join(d, f"org-{i:02d}.json"), "w",
+                  encoding="utf-8", newline="\n") as fh:
+            json.dump(ans, fh, ensure_ascii=False, separators=(",", ":"))
+
+    size = sum(os.path.getsize(os.path.join(d, x)) for x in os.listdir(d))
+    print(f"\n→ {d}")
+    print(f"  {len(live)} 筆、{len(orgs)} 個機關、合計 {size/1048576:.1f} MB")
+    print(f"  前五大：" + "、".join(f"{o['o']}({len(o['items'])})" for o in orgs[:5]))
+    print(f"  沿用到點閱數 {sum(1 for o in orgs for it in o['items'] if it[3])} 筆，"
+          f"沒有分類而歸到「其他綜合」的 {nocat} 筆")
+
+
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--out", default="_site_faq_out")
-    ap.add_argument("--old", default=DEFAULT_OLD, help="舊的 data 資料夾")
+    ap.add_argument("--target", choices=("search", "ms"), default="search",
+                    help="search＝FAQ 搜尋站，ms＝1999 秘密客")
+    ap.add_argument("--out", default="")
+    ap.add_argument("--old", default="", help="舊的 data 資料夾")
     a = ap.parse_args()
+    if a.target == "ms":
+        a.old = a.old or OLD_MS
+        return export_ms(a.out or "_site_ms_out", a.old)
+    a.old = a.old or OLD_SEARCH
+    a.out = a.out or "_site_faq_out"
 
     hits, short_tbl = load_old(a.old)
     recs = C.load_data()

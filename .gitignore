@@ -30,3 +30,8 @@ report.md
 
 # 匯出到搜尋站的產出
 _site_faq_out/
+
+# 匯出與同步用的工作目錄
+_site_faq_out/
+_site_ms_out/
+_repos/
