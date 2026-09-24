@@ -243,10 +243,38 @@ class Handler(SimpleHTTPRequestHandler):
             return self._json({"ok": ok, "msg": msg}, 200 if ok else 409)
         return self.send_error(404)
 
+    # 允許哪些網頁來呼叫這台本機工作台。
+    # 瀏覽器禁止 https 網頁連 http 網站，但 127.0.0.1 是例外（本機被當成
+    # 可信任來源），所以 GitHub Pages 上的那頁可以直接驅動這裡的爬蟲。
+    # "null" 是在資料夾裡點兩下 HTML（file://）時瀏覽器送出的 Origin。
+    # 不用 "*"：這台伺服器雖然只聽 127.0.0.1，但任何網站都能叫你的瀏覽器
+    # 去打它，開放全部等於誰都能在你電腦上按下「開始抓取」。
+    ALLOW_ORIGINS = {
+        "null",
+        "https://andy939.github.io",
+        "http://127.0.0.1:8765", "http://localhost:8765",
+    }
+
+    def _cors(self):
+        origin = self.headers.get("Origin")
+        if origin in self.ALLOW_ORIGINS:
+            self.send_header("Access-Control-Allow-Origin", origin)
+            self.send_header("Vary", "Origin")
+
+    def do_OPTIONS(self):
+        # 預檢請求：瀏覽器在送 POST 之前會先問一次「我可以嗎」。
+        # 這裡不要自己叫 _cors()，end_headers() 已經會加 —— 加兩次會變成
+        # 「Allow-Origin: null,null」，瀏覽器看到多值就整個判定無效。
+        self.send_response(204)
+        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+        self.send_header("Access-Control-Max-Age", "86400")
+        self.end_headers()
+
     def end_headers(self):
         # 資料檔每次抓完就變，不要讓瀏覽器拿舊的
         if self.path.endswith((".json", ".csv", ".html")):
             self.send_header("Cache-Control", "no-cache")
+        self._cors()
         super().end_headers()
 
     def log_message(self, *a):

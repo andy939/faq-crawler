@@ -395,14 +395,30 @@ function repoSlug(){
   return m ? `${m[1]}/${seg||m[1]+'.github.io'}` : REPO_FALLBACK;
 }
 
+// ---- 資料從哪來 ------------------------------------------------------------
+// 這一頁有三種開法，資料來源不一樣：
+//   1. 本機工作台  http://127.0.0.1:8765     → 同目錄就有檔案
+//   2. GitHub Pages                          → 同目錄就有檔案
+//   3. 在資料夾裡點兩下（file://）           → 瀏覽器擋 file:// 的 fetch，
+//      改跟本機工作台要。工作台沒開就會提示你去開。
+// 另外不管哪一種開法，只要本機工作台開著，抓取與工具的按鈕就能用 ——
+// 工作台那邊已經放行這幾個來源（見 工作台.py 的 ALLOW_ORIGINS）。
+const LOCAL = 'http://127.0.0.1:8765/';
+// file: 之外，data: 和 blob: 也一樣沒有「同目錄」可以拿檔案，一律問本機
+const FILE_MODE = location.protocol !== 'http:' && location.protocol !== 'https:';
+const DATA_BASE = FILE_MODE ? LOCAL : '';
+// API 一律優先問同源，同源沒有（GitHub Pages、file://）就問本機
+let API_BASE = FILE_MODE ? LOCAL : '';
+const api = p => API_BASE + 'api/' + p;
+
 // ---- 載入 ------------------------------------------------------------------
 let ALL=[], META={}, RUNS=[], CHG=[], shown=200;
 
 Promise.all([
-  fetch('faq.json').then(r=>r.json()),
-  fetch('meta.json').then(r=>r.json()).catch(()=>({})),
-  fetch('runs.csv').then(r=>r.ok?r.text():'').catch(()=>''),
-  fetch('changes.csv').then(r=>r.ok?r.text():'').catch(()=>''),
+  fetch(DATA_BASE+'faq.json').then(r=>r.json()),
+  fetch(DATA_BASE+'meta.json').then(r=>r.json()).catch(()=>({})),
+  fetch(DATA_BASE+'runs.csv').then(r=>r.ok?r.text():'').catch(()=>''),
+  fetch(DATA_BASE+'changes.csv').then(r=>r.ok?r.text():'').catch(()=>''),
 ]).then(([faq,meta,runsTxt,chgTxt])=>{
   ALL=faq; META=meta;
   const a=parseCSV(runsTxt); RUNS={head:a.head, rows:a.rows.slice().reverse()};
@@ -410,9 +426,11 @@ Promise.all([
   $('#loading').hidden=true;
   init();
 }).catch(e=>{
-  $('#loading').innerHTML='<span style="color:var(--danger)">載入失敗：'+
-    esc(e.message)+'</span><br>直接雙擊 HTML 檔的話瀏覽器會擋住讀取，'+
-    '請用 <code>啟動.bat</code> 開。';
+  $('#loading').innerHTML = FILE_MODE
+    ? '<span style="color:var(--danger)">連不上本機工作台</span><br><br>'
+      + '你是在資料夾裡點兩下開這一頁的，資料要跟工作台拿。<br>'
+      + '請先雙擊 <code>啟動.bat</code>，再重新整理這一頁。'
+    : '<span style="color:var(--danger)">載入失敗：'+esc(e.message)+'</span>';
 });
 
 function init(){
@@ -814,20 +832,29 @@ $('#gha-go').onclick=()=>open(
 // 放在 GitHub Pages 上時那支是 404，網頁就只是唯讀的監控頁。
 let POLL, SEEN=0, METHODS={};
 async function local(){
+  // 先問同源（本機工作台自己服務這一頁的情況），沒有就問 127.0.0.1
+  // ——GitHub Pages 上的這一頁也能驅動你電腦上的工作台，靠的就是這段。
   let info;
-  try{
-    const r=await fetch('api/ping',{cache:'no-store'});
-    if(!r.ok) return; info=await r.json();
-  }catch(e){ return; }
+  for (const base of ['', LOCAL]) {
+    if (base === '' && FILE_MODE) continue;      // file:// 沒有同源可問
+    try{
+      const r = await fetch(base + 'api/ping', {cache:'no-store'});
+      if(!r.ok) continue;
+      info = await r.json();
+      API_BASE = base;
+      break;
+    }catch(e){ /* 這個來源沒有工作台，換下一個 */ }
+  }
+  if(!info) return;                              // 沒有工作台，就只當唯讀頁
   $('#panel').hidden=false; $('#toolcard').hidden=false;
   $('#xls').hidden=false;
   $('#xls').onclick=async()=>{
     $('#xls').disabled=true;
     $('#xlsmsg').textContent='產生中…（八千多筆，約 20 秒）';
-    const j=await (await fetch('api/tool?key=excel',{method:'POST'})).json();
+    const j=await (await fetch(api('tool?key=excel'),{method:'POST'})).json();
     if(!j.ok){ $('#xlsmsg').textContent=j.msg; $('#xls').disabled=false; return; }
     const t=setInterval(async()=>{
-      const s=await (await fetch('api/log?since=0',{cache:'no-store'})).json();
+      const s=await (await fetch(api('log?since=0'),{cache:'no-store'})).json();
       if(s.running) return;
       clearInterval(t); $('#xls').disabled=false;
       // 從輸出裡撈檔名，給一個直接下載的連結
@@ -854,7 +881,7 @@ async function local(){
     from:$('#cf').value||'', to:$('#ct').value||'', rate:$('#iv').value}));
   // 清單對帳＝整份清單抓下來跟手上的資料比，官網幾筆就補到幾筆
   $('#recon').onclick=()=>run('api/run?mode=fill&method=B');
-  $('#stop').onclick=()=>fetch('api/stop',{method:'POST'});
+  $('#stop').onclick=()=>fetch(api('stop'),{method:'POST'});
   poll();
 }
 function desc(){
@@ -867,7 +894,7 @@ function desc(){
 }
 async function run(url){
   $('#go').disabled=true;
-  const j=await (await fetch(url,{method:'POST'})).json();
+  const j=await (await fetch(API_BASE+url,{method:'POST'})).json();
   if(!j.ok){ $('#msg').textContent=j.msg; $('#go').disabled=false; return; }
   SEEN=0; $('#log').hidden=false; $('#log').textContent='';
   delete $('#msg').dataset.done; poll();
@@ -887,7 +914,7 @@ function cards(m,elapsed){
 async function poll(){
   clearTimeout(POLL);
   let s;
-  try{ s=await (await fetch('api/log?since='+SEEN,{cache:'no-store'})).json(); }
+  try{ s=await (await fetch(api('log?since='+SEEN),{cache:'no-store'})).json(); }
   catch(e){ return; }
   if(s.lines.length){
     $('#log').hidden=false;
