@@ -27,3 +27,6 @@ Thumbs.db
 # 產生物
 report.md
 *.xlsx
+
+# 匯出到搜尋站的產出
+_site_faq_out/
