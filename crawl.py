@@ -63,6 +63,7 @@ PROBE_N = 5              # 開跑前探測幾筆
 # 2026-09-12 第一次在 GitHub 上跑，探測 755ms，離 800ms 只差 45ms。
 # 挨罰時是 +2000ms 以上，所以放寬到 1800ms 仍然抓得到。
 PROBE_LIMIT_MS = 1800 if os.environ.get("GITHUB_ACTIONS") else 800
+PROBE_RETRY_WAIT = 20    # 第一次探測偏高時，等幾秒再探一次才決定要不要放棄
 ABORT_AFTER_BLOCKS = 5   # 連續被擋這麼多次就停，不硬衝
 MAX_GONE_CHECK = 60      # 不在清單裡的超過這個數，當作清單沒抓完整，不判下架
 TIMEOUT = 30
@@ -473,19 +474,43 @@ class Fetcher:
 
 
 def probe(fe, recs):
-    """開跑前先探五筆，正在挨罰就別跑了。
-    9/8 有一輪就是一開始就在挨罰，25 分鐘的資料完全不能用。"""
+    """開跑前探幾筆，看站方是不是正在罰我們。
+
+    只量「等伺服器」那一段 —— 送出請求到收到第一個位元組。以前是量整個
+    fe.get() 的牆鐘時間，裡面混了三樣不該算的東西，結果在公司第一次跑
+    幾乎每次都誤判成限流、抓十幾秒就停：
+
+      1. 限速器的 sleep：每次請求前程式自己故意等 333ms
+      2. 第一次連線的成本：DNS + TCP + TLS 握手，公司網路還要過 proxy
+      3. 下載 197 KB 內文的時間：那是傳輸慢，不是伺服器慢
+
+    所以現在多探一筆當暖身、那筆不計入，並且直接取 _timed 量到的 t_wait。
+
+    只看速度還不夠：被擋的時候站方回的是 3 KB 錯誤頁，那個「很快」，
+    所以順便數一下有幾筆根本不是正常內文頁。
+
+    回傳 (中位毫秒, 每筆毫秒清單, 拿到錯誤頁的筆數)。
+    """
     urls = [r["url"] for r in list(recs.values())[:300]
-            if r.get("kind") == "internal"][:PROBE_N]
+            if r.get("kind") == "internal"][:PROBE_N + 1]
     if not urls:
-        return 0.0
-    lat = []
-    for u in urls:
-        t = time.perf_counter()
-        fe.get(u, detail=True)
-        lat.append((time.perf_counter() - t) * 1000)
-    lat.sort()
-    return lat[len(lat) // 2]
+        return 0.0, [], 0
+    lat, bad = [], 0
+    for i, u in enumerate(urls):
+        try:
+            r, t_wait, _, _, _ = fe._timed(fe.session().get, u)
+        except Blocked:
+            raise
+        except Exception:
+            continue
+        if i == 0:
+            continue                      # 暖身那筆不算
+        lat.append(t_wait * 1000)
+        if F.is_blocked(r):
+            bad += 1
+    if not lat:
+        return 0.0, [], bad
+    return sorted(lat)[len(lat) // 2], lat, bad
 
 
 # ---- 清單 -------------------------------------------------------------------
@@ -723,13 +748,36 @@ def main():
     gone, back, events, samples = 0, 0, [], []
     total, got_list = None, 0
     try:
-        ms = probe(fe, recs)
-        if ms:
-            print(f"  探測 {PROBE_N} 筆，中位 {ms:.0f}ms")
-            emit(phase="探測", probe_ms=round(ms))
-        if ms > PROBE_LIMIT_MS and not a.force:
-            note = f"探測 {ms:.0f}ms，站方正在限流"
+        bad = 0
+
+        def do_probe(label=""):
+            nonlocal bad
+            ms, lat, bad = probe(fe, recs)
+            if lat:
+                print(f"  探測{label} {len(lat)} 筆（另有 1 筆暖身不計）："
+                      + "、".join(f"{x:.0f}" for x in lat)
+                      + f" ms，中位 {ms:.0f}ms"
+                      + (f"，其中 {bad} 筆拿到錯誤頁" if bad else ""))
+                emit(phase="探測", probe_ms=round(ms), probe_bad=bad)
+            return ms
+
+        ms = do_probe()
+        # 錯誤頁是「很快」回來的，只看速度抓不到。半數以上不是正常內文頁
+        # 就等於正在被擋，這種情況硬跑只會拿到一堆空白覆蓋好資料。
+        if bad * 2 >= PROBE_N and not a.force:
+            note = f"探測 {PROBE_N} 筆有 {bad} 筆是錯誤頁，站方正在擋"
             raise Blocked(note + "，本次跳過")
+        if ms > PROBE_LIMIT_MS and not a.force:
+            # 不要一次就收工。限流「會來會走」，而且剛開跑時連線還沒熱，
+            # 第一輪偏高很常見 —— 等一下再探一次，真的還是慢才跳過。
+            print(f"！探測 {ms:.0f}ms 偏高（門檻 {PROBE_LIMIT_MS}ms），"
+                  f"等 {PROBE_RETRY_WAIT} 秒再探一次…")
+            time.sleep(PROBE_RETRY_WAIT)
+            ms = do_probe("（第二次）")
+            if ms > PROBE_LIMIT_MS:
+                note = f"探測兩次都超過 {PROBE_LIMIT_MS}ms（{ms:.0f}ms），站方正在限流"
+                raise Blocked(note + "，本次跳過")
+            print("  第二次探測正常，繼續。")
 
         fe.warm_up()
         token = date_token(fe, a.d_from, a.d_to) if (a.d_from or a.d_to) else ""
