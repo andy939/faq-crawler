@@ -64,10 +64,11 @@ PROBE_N = 5              # 開跑前探測幾筆
 # 挨罰時是 +2000ms 以上，所以放寬到 1800ms 仍然抓得到。
 PROBE_LIMIT_MS = 1800 if os.environ.get("GITHUB_ACTIONS") else 800
 PROBE_RETRY_WAIT = 20    # 第一次探測偏高時，等幾秒再探一次才決定要不要放棄
-# 連續這麼多次拿到錯誤頁才整個停下來。原本的 app.py 就是用 30，
-# 我一度改成 5，結果站方偶爾丟一小段錯誤頁就會把長跑打斷。
-# 沒抓到的那幾筆本來就會跳過不覆蓋，下次補齊會補回來，不需要那麼神經質。
-ABORT_AFTER_BLOCKS = 30
+# 連續這麼多次拿到錯誤頁就自動停。預設 0 ＝ 永不自動停，跑到完為止，
+# 要停由你按「停止」。沒抓到的那幾筆本來就會跳過不覆蓋、下次補齊補回來，
+# 所以硬跑不會弄壞資料 —— 程式沒有理由替你決定放棄。
+# 要自動停就用 --abort-after N。
+ABORT_AFTER_BLOCKS = 0
 MAX_GONE_CHECK = 60      # 不在清單裡的超過這個數，當作清單沒抓完整，不判下架
 TIMEOUT = 30
 MAX_RETRY = 3
@@ -113,8 +114,10 @@ RUN_COLS = ["時間", "來源", "模式", "抓法", "併發", "限速ms", "範�
             "壓縮率%", "有效率%", "延遲p50ms", "延遲p95ms", "備註"]
 
 # 逐筆原始測量的欄位（exports/*.csv）
-SAMPLE_COLS = ["seq", "sid", "no", "抓法", "併發", "標題", "機關",
-               "發布日期", "更新時間", "內容字數", "附件數",
+# 「結果」和「起算秒」是拿來分析限流的：錯誤頁與失敗也要留一列，
+# 不然被擋的那些完全沒紀錄，就沒東西可以看「什麼時候開始被罰、罰多久」。
+SAMPLE_COLS = ["seq", "起算秒", "結果", "sid", "no", "抓法", "併發",
+               "標題", "機關", "發布日期", "更新時間", "內容字數", "附件數",
                "抓下bytes", "原始bytes", "需要bytes",
                "等伺服器ms", "傳輸ms", "解析ms", "總計ms", "thread", "時間"]
 
@@ -280,7 +283,10 @@ class Fetcher:
     9/6 那輪就是靠這個看出關掉 gzip 慢的是傳輸、不是伺服器。
     """
 
-    def __init__(self, rate_ms=RATE_MS, method=DEFAULT_METHOD):
+    def __init__(self, rate_ms=RATE_MS, method=DEFAULT_METHOD,
+                 abort_after=ABORT_AFTER_BLOCKS):
+        self.abort_after = abort_after
+        self.t0 = time.perf_counter()     # 逐筆測量的「起算秒」用這個當原點
         self.method = method
         label, _, kw = METHODS[method]
         self.label = label
@@ -378,14 +384,30 @@ class Fetcher:
                 self.blocked += 1
                 self.streak += 1
                 streak = self.streak
-            if streak >= ABORT_AFTER_BLOCKS:
+            if self.abort_after and streak >= self.abort_after:
                 raise Blocked(f"連續被擋 {streak} 次")
             time.sleep((20 if r.status_code != 200 else 3) * (attempt + 1))
         return None
 
     # -- 一筆內文（含量測）--
     def detail(self, item):
-        """回傳 (record, sample)；抓不到回 (None, None)。"""
+        """回傳 (record, sample)。抓不到時 record 是 None，但 sample 還是有 ——
+        錯誤頁和連線失敗都留一列，那才是分析限流的原始資料。"""
+
+        def failed(why, tw=0.0, tr=0.0, wire=0, raw=0):
+            return None, {
+                "起算秒": round(time.perf_counter() - self.t0, 2),
+                "結果": why, "sid": item["sid"], "no": item.get("no", ""),
+                "抓法": self.method, "併發": self.workers,
+                "標題": item.get("list_title", ""), "機關": item.get("list_dept", ""),
+                "發布日期": "", "更新時間": "", "內容字數": 0, "附件數": 0,
+                "抓下bytes": wire, "原始bytes": raw, "需要bytes": 0,
+                "等伺服器ms": round(tw * 1000, 1), "傳輸ms": round(tr * 1000, 1),
+                "解析ms": 0, "總計ms": round((tw + tr) * 1000, 1),
+                "thread": threading.current_thread().name,
+                "時間": time.strftime("%H:%M:%S"),
+            }
+
         s = self.session()
         ref = F.LIST_URL if self.warm else None
         hdr = {"Referer": ref} if ref else {}
@@ -393,16 +415,19 @@ class Fetcher:
             r, tw, tr, wire, raw = self._timed(s.get, item["url"], headers=hdr)
         except Blocked:
             raise
-        except Exception:
-            return None, None
+        except Exception as e:
+            return failed(f"連線失敗：{type(e).__name__}")
         if F.is_blocked(r):
             with self.lock:
                 self.blocked += 1
                 self.streak += 1
                 streak = self.streak
-            if streak >= ABORT_AFTER_BLOCKS:
+            if self.abort_after and streak >= self.abort_after:
                 raise Blocked(f"連續被擋 {streak} 次")
-            return None, None
+            # 錯誤頁約 3 KB、HTTP 仍然是 200。這一列留著才看得出
+            # 「第幾秒開始被擋、連續擋了幾筆、多久解除」
+            return failed(f"錯誤頁 HTTP{r.status_code} {len(r.content)}B",
+                          tw, tr, wire, raw)
         with self.lock:
             self.streak = 0
 
@@ -461,6 +486,7 @@ class Fetcher:
         rec["bytes_raw"] = raw
         rec["bytes_needed"] = need
         sample = {
+            "起算秒": round(time.perf_counter() - self.t0, 2), "結果": "正常",
             "sid": rec["sid"], "no": item.get("no", ""),
             "抓法": self.method, "併發": self.workers,
             "標題": rec["title"], "機關": rec["dept"],
@@ -723,6 +749,9 @@ def main():
     ap.add_argument("--rate-ms", type=int, default=RATE_MS, help="每次請求間隔毫秒")
     ap.add_argument("--check", action="store_true", help="環境檢查")
     ap.add_argument("--dry-run", action="store_true", help="只看不寫")
+    ap.add_argument("--abort-after", type=int, default=ABORT_AFTER_BLOCKS,
+                    metavar="N",
+                    help="連續被擋 N 次就自動停（預設 0 ＝ 不自動停，跑到完為止）")
     ap.add_argument("--gate", action="store_true",
                     help="探測到站方在限流就跳過本次（預設不判斷，設定什麼就抓什麼）")
     ap.add_argument("--force", action="store_true",
@@ -738,7 +767,7 @@ def main():
     recs = load_data()
     htmls = load_html()          # 原始 HTML，另外一份
     meta = load_meta()
-    fe = Fetcher(a.rate_ms, a.method)
+    fe = Fetcher(a.rate_ms, a.method, a.abort_after)
     bench = bool(a.limit or a.d_from or a.d_to)
     mode = ("效能測試" if bench else
             "全站" if a.full else
@@ -941,8 +970,11 @@ def main():
     body = sum(1 for r in live.values() if r.get("answer") or r.get("files"))
     total = total or meta.get("site_total")
     lat = sorted(fe.lat)
-    n_s = len(samples)
-    kept = sum(s["需要bytes"] for s in samples)
+    # 逐筆平均只算成功的那些。錯誤頁和失敗也有列（分析限流要用），
+    # 但把它們算進「每筆幾毫秒」會讓數字失真。
+    ok_s = [s for s in samples if s.get("結果") == "正常"]
+    n_s = len(ok_s)
+    kept = sum(s["需要bytes"] for s in ok_s)
     detail_reqs = fe.reqs - fe.list_reqs
 
     if not a.dry_run:
@@ -980,8 +1012,8 @@ def main():
             "原始MB": round(fe.raw / 1048576, 2),
             "需要KB": round(kept / 1024, 1),
             # 單筆的最小與最大，網頁那張比較表會印在「需要/筆」下面一行
-            "需要最小B": min((s["需要bytes"] for s in samples), default=""),
-            "需要最大B": max((s["需要bytes"] for s in samples), default=""),
+            "需要最小B": min((s["需要bytes"] for s in ok_s), default=""),
+            "需要最大B": max((s["需要bytes"] for s in ok_s), default=""),
             "壓縮率%": round(fe.wire / fe.raw * 100, 1) if fe.raw else 0,
             "有效率%": round(kept / fe.wire * 100, 2) if fe.wire else 0,
             "延遲p50ms": round(pct(lat, 0.5) * 1000),
