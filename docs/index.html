@@ -306,8 +306,8 @@ mark{background:#ffe9a8;border-radius:2px}
     <div class="wrap"><table id="t-fix"></table></div>
     <div class="hint">
       這一頁是拿來發給各局處的。<b>已過期還掛著</b>是下版日期已經過了但問答還在站上；
-      <b>沒設下版日期</b>表示不會自動下架，需要人工盯；<b>一年以上沒檢視</b>用資料
-      檢視時間判斷；<b>沒有內容</b>是內文空白且沒有附件；<b>標題重複</b>是同一個標題
+      <b>沒設下版日期</b>表示不會自動下架，需要人工盯；<b>一年以上沒檢視</b>只看站上的
+      「資料檢視」欄位，沒有值就不算（不會拿發布或更新時間頂替）；<b>沒有內容</b>是內文空白且沒有附件；<b>標題重複</b>是同一個標題
       在站上出現一次以上。匯出的 CSV 一列一個問題，可以直接按機關拆給承辦。
     </div>
   </section>
@@ -475,8 +475,8 @@ function filtered(){
     if(ex==='soon'){ const d=(r.expire||'').slice(0,10);
       if(!(d>=today && d<=plus(90))) return false; }
     if(ex==='none' && r.expire) return false;
-    if(ex==='stale'){ const d=(r.reviewed||r.updated||'').slice(0,10);
-      if(!(!d || d<plus(-365))) return false; }
+    if(ex==='stale'){ const d=(r.reviewed||'').slice(0,10);
+      if(!(r.kind!=='external' && d && d<plus(-365))) return false; }
     if(q && !(norm(r.title).includes(q)||norm(r.answer).includes(q)||
               norm(r.dept).includes(q))) return false;
     return true;
@@ -574,8 +574,8 @@ function stats(){
     ['90 天內到期', live.filter(r=>{const d=(r.expire||'').slice(0,10);
         return d>=today&&d<=soon;}).length,'soon'],
     ['沒設下版日期', live.filter(r=>!r.expire).length,'none'],
-    ['一年以上沒檢視', live.filter(r=>{const d=(r.reviewed||r.updated||'').slice(0,10);
-        return !d||d<old;}).length,'stale'],
+    ['一年以上沒檢視', live.filter(r=>r.kind!=='external'
+        && r.reviewed && r.reviewed.slice(0,10)<old).length,'stale'],
   ];
   bars($('#s-exp'), ex.map(e=>[e[0],e[1]]), k=>{
     $('#q').dataset.expire=ex.find(e=>e[0]===k)[2]; goFaq();});
@@ -597,13 +597,18 @@ function buildFix(){
   FIX=[];
   live.forEach(r=>{
     const exp=(r.expire||'').slice(0,10);
-    const chk=(r.reviewed||r.updated||r.published||'').slice(0,10);
+    // 只認站上真正的「資料檢視」欄位。以前沒有值就退用更新時間、再退用
+    // 發布時間 —— 那會讓外部連結（沒有內文頁、沒有這個欄位）看起來像
+    // 「發布那天被檢視過」，是個不會報錯但會誤導人的假日期。
+    const chk=(r.reviewed||'').slice(0,10);
     const add=(問題,說明)=>FIX.push({問題,說明,sid:r.sid,機關:r.dept||'（未填）',
       標題:r.title,發布日期:(r.published||'').slice(0,10),下版日期:exp,
       最後檢視:chk,網址:r.url});
     if(exp && exp<today) add('已過期還掛著',`下版日期 ${exp} 已過`);
     if(!exp) add('沒設下版日期','不會自動下架，需要人工盯');
-    if(!chk || chk<old) add('一年以上沒檢視',`最後異動 ${chk||'不明'}`);
+    // 外部連結沒有站內內文頁，站上不會有檢視時間，不能拿來當沒檢視
+    if(r.kind!=='external' && chk && chk<old) add('一年以上沒檢視',`最後檢視 ${chk}`);
+    if(r.kind!=='external' && !chk) add('沒有檢視時間','站上這一筆沒有填「資料檢視」');
     if(r.kind!=='external' && !r.answer && !(r.files&&r.files.length))
       add('沒有內容','內文空白且沒有附件');
     if(r.kind==='external') add('連到外部網站','內容不在市府網站，連結可能失效');

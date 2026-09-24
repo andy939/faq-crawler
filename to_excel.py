@@ -31,6 +31,8 @@ import crawl as C
 CTRL = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f]")
 HEAD_FILL = PatternFill("solid", fgColor="1A6A5A")
 HEAD_FONT = Font(bold=True, color="FFFFFF")
+LINK_FONT = Font(color="0563C1", underline="single")
+MAX_LINK = 65000          # Excel 一張工作表最多約 65,530 個超連結，留點餘裕
 
 
 def clean(v):
@@ -40,11 +42,21 @@ def clean(v):
     return v
 
 
-def sheet(wb, title, header, rows, widths=None, freeze="A2"):
+def sheet(wb, title, header, rows, widths=None, freeze="A2", links=()):
+    """links：欄位名稱，那幾欄的網址會變成可以點的連結。"""
     ws = wb.create_sheet(title)
     ws.append(header)
+    cols = [header.index(c) + 1 for c in links if c in header]
+    n = 0
     for r in rows:
         ws.append([clean(x) for x in r])
+        for c in cols:
+            cell = ws.cell(row=ws.max_row, column=c)
+            v = cell.value
+            if isinstance(v, str) and v.startswith("http") and n < MAX_LINK:
+                cell.hyperlink = v
+                cell.font = LINK_FONT
+                n += 1
     for c in range(1, len(header) + 1):
         cell = ws.cell(row=1, column=c)
         cell.fill, cell.font = HEAD_FILL, HEAD_FONT
@@ -132,6 +144,12 @@ def main():
         ws.cell(row=row, column=1).font = Font(bold=True)
         ws.cell(row=row, column=2).alignment = Alignment(wrap_text=True,
                                                          vertical="top")
+    for row in range(1, ws.max_row + 1):
+        v = ws.cell(row=row, column=2).value
+        m = re.search(r"https?://\S+", v or "") if isinstance(v, str) else None
+        if m:
+            ws.cell(row=row, column=2).hyperlink = m.group(0)
+            ws.cell(row=row, column=2).font = LINK_FONT
     ws.column_dimensions["A"].width = 26
     ws.column_dimensions["B"].width = 95
 
@@ -158,7 +176,7 @@ def main():
         rows.append(row)
     sheet(wb, "問答", hdr, rows,
           widths=[18, 52, 22, 12, 17, 17, 12, 22, 70, 10, 8, 30,
-                  11, 11, 10, 10, 11, 60])
+                  11, 11, 10, 10, 11, 60], links=("網址",))
 
     # ---------- 維護建議 ----------
     titles = Counter((r.get("title") or "").strip() for r in live)
@@ -167,7 +185,10 @@ def main():
     fix = []
     for r in live:
         exp = (r.get("expire") or "")[:10]
-        chk = (r.get("reviewed") or r.get("updated") or r.get("published") or "")[:10]
+        # 只認站上真正的「資料檢視」欄位。以前沒有值就退用更新時間、再退用
+        # 發布時間 —— 那會讓 39 筆外部連結（根本沒有內文頁、沒有這個欄位）
+        # 看起來像「發布那天被檢視過」，是個不會報錯但會誤導人的假日期。
+        chk = (r.get("reviewed") or "")[:10]
 
         def add(problem, why):
             fix.append([r.get("dept") or "（未填）", problem, why, r["title"],
@@ -176,8 +197,11 @@ def main():
             add("已過期還掛著", f"下版日期 {exp} 已過")
         if not exp:
             add("沒設下版日期", "不會自動下架，需要人工盯")
-        if not chk or chk < old:
-            add("一年以上沒檢視", f"最後異動 {chk or '不明'}")
+        # 外部連結沒有站內內文頁，站上不會有檢視時間，不能拿來當沒檢視
+        if r.get("kind") != "external" and chk and chk < old:
+            add("一年以上沒檢視", f"最後檢視 {chk}")
+        if r.get("kind") != "external" and not chk:
+            add("沒有檢視時間", "站上這一筆沒有填「資料檢視」")
         if r.get("kind") != "external" and not r.get("answer") \
                 and not r.get("files"):
             add("沒有內容", "內文空白且沒有附件")
@@ -190,7 +214,7 @@ def main():
     fix.sort(key=lambda x: (x[0], x[1]))
     sheet(wb, "維護建議",
           ["機關", "問題", "說明", "標題", "發布日期", "下版日期", "最後檢視", "網址"],
-          fix, widths=[24, 16, 30, 52, 12, 12, 12, 60])
+          fix, widths=[24, 16, 30, 52, 12, 12, 12, 60], links=("網址",))
 
     # ---------- 機關統計 ----------
     by_dept = {}
@@ -239,7 +263,7 @@ def main():
     h, rows = read_csv(C.CHANGES)
     if h:
         sheet(wb, "異動紀錄", h, rows[::-1],
-              widths=[16, 8, 22, 12, 24, 52, 18, 60])
+              widths=[16, 8, 22, 12, 24, 52, 18, 60], links=("網址",))
 
     # ---------- 逐筆測量 ----------
     files = sorted(glob.glob(os.path.join(C.EXPORTS, "*.csv")))
