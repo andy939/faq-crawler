@@ -128,6 +128,8 @@ def build_args(q):
         return "環境檢查", args + ["--check"]
     elif mode == "dry":
         args.append("--dry-run")
+    elif mode == "rss":
+        args.append("--rss")
 
     method = q.get("method", ["B"])[0]
     if method in C.METHODS:
@@ -146,7 +148,7 @@ def build_args(q):
         args.append("--force")
 
     label = {"fill": "補齊", "full": "全站重抓", "refresh": "補齊＋複查",
-             "dry": "試跑"}.get(mode, mode)
+             "dry": "試跑", "rss": "RSS 快更"}.get(mode, mode)
     label += f"・抓法 {method}"
     if limit:
         label += f"・{limit} 筆"

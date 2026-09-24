@@ -56,6 +56,12 @@ RUNS = os.path.join(DOCS, "runs.csv")
 CHANGES = os.path.join(DOCS, "changes.csv")
 STOP = os.path.join(DOCS, ".stop")        # 工作台按「停止」會建這個檔
 
+# 官方的 RSS（開放資料）。這是唯一能「便宜地」知道誰被改過的管道 ——
+# 清單頁只給發布日期，內文頁才有更新時間，而 RSS 的 pubDate 就是更新時間，
+# 一次請求就拿得到最近 50 筆異動。缺點是只有 50 筆，當日異動超過 50 筆會漏，
+# 所以它是快篩、不是保證，兜底還是要靠全站重抓。
+RSS_URL = "https://www.gov.taipei/OpenData.aspx?SN=46F4BC0B817F916D"
+
 RATE_MS = 333            # 每次請求的間隔。全站約 50 分鐘。
 PROBE_N = 5              # 開跑前探測幾筆
 # 探測中位數超過這個就跳過本次（站方正在挨罰）。
@@ -542,6 +548,57 @@ def probe(fe, recs):
     return sorted(lat)[len(lat) // 2], lat, bad
 
 
+# ---- RSS 快篩 ---------------------------------------------------------------
+RSS_ITEM = re.compile(r"<item>(.*?)</item>", re.S)
+
+
+def _tag(seg, tag):
+    m = re.search(r"<%s>(?:<!\[CDATA\[)?(.*?)(?:\]\]>)?</%s>" % (tag, tag), seg, re.S)
+    return m.group(1) if m else ""
+
+
+def rss_changed(fe, recs):
+    """讀官方 RSS，回傳 (要抓的清單, 提示訊息)。
+
+    pubDate 就是站上的「資料更新」時間，所以拿它跟我們存的比，
+    就知道誰動過 —— 一次請求，不用進去敲八千頁。
+
+    只有 50 筆，所以會檢查「最舊的那筆是不是比我們上次跑的時間還新」，
+    是的話代表這期間的異動可能已經被擠出榜外，會提醒你補跑全站。
+    """
+    from email.utils import parsedate_to_datetime
+
+    html = fe.get(RSS_URL)
+    if not html:
+        raise Blocked("RSS 抓不到")
+    items = RSS_ITEM.findall(html)
+    if not items:
+        raise Blocked("RSS 沒有內容（格式可能改了）")
+
+    todo, seen, oldest = [], [], None
+    for it in items:
+        link = _html.unescape(_tag(it, "link"))
+        m = re.search(r"[?&]s=([0-9A-Fa-f]+)", link)
+        if not m:
+            continue                      # 沒有 sid 的（外部連結）跳過
+        sid = m.group(1)
+        try:
+            when = parsedate_to_datetime(_tag(it, "pubDate")).astimezone()
+        except Exception:
+            continue
+        stamp = when.strftime("%Y-%m-%d %H:%M")
+        oldest = stamp if oldest is None or stamp < oldest else oldest
+        seen.append(stamp)
+        rec = recs.get(sid)
+        if rec is None or (rec.get("updated") or "")[:16] < stamp:
+            todo.append({"sid": sid, "url": link, "kind": "internal",
+                         "list_title": _tag(it, "title"), "list_dept": "",
+                         "list_date": "", "no": ""})
+    note = (f"RSS {len(items)} 筆（{oldest} ~ {max(seen) if seen else '—'}），"
+            f"其中 {len(todo)} 筆要抓")
+    return todo, note, oldest
+
+
 # ---- 清單 -------------------------------------------------------------------
 def ext_key(row):
     """連到外部網站的項目沒有站內 sid，只能拿網址當識別。但站上有兩筆不同的
@@ -747,6 +804,8 @@ def main():
     ap.add_argument("--from", dest="d_from", default="", help="發布日期起（YYYY-MM-DD）")
     ap.add_argument("--to", dest="d_to", default="", help="發布日期迄（YYYY-MM-DD）")
     ap.add_argument("--rate-ms", type=int, default=RATE_MS, help="每次請求間隔毫秒")
+    ap.add_argument("--rss", action="store_true",
+                    help="只抓官方 RSS 報告有異動的（1 次請求＋幾筆，數秒）")
     ap.add_argument("--check", action="store_true", help="環境檢查")
     ap.add_argument("--dry-run", action="store_true", help="只看不寫")
     ap.add_argument("--abort-after", type=int, default=ABORT_AFTER_BLOCKS,
@@ -769,7 +828,11 @@ def main():
     meta = load_meta()
     fe = Fetcher(a.rate_ms, a.method, a.abort_after)
     bench = bool(a.limit or a.d_from or a.d_to)
+    # 這兩種模式都沒有把整份清單抓下來，所以不能拿來判斷「抓齊了沒」。
+    # 完整性這件事只能由真的對過帳的那一輪來寫，不然數字會互相污染。
+    no_reconcile = bench or a.rss
     mode = ("效能測試" if bench else
+            "RSS快更" if a.rss else
             "全站" if a.full else
             "補齊+複查" if a.refresh else "補齊")
     scope = (f"{a.d_from or '不限'}~{a.d_to or '不限'}" if (a.d_from or a.d_to)
@@ -822,8 +885,20 @@ def main():
         fe.warm_up()
         token = date_token(fe, a.d_from, a.d_to) if (a.d_from or a.d_to) else ""
 
+        if a.rss:
+            # RSS 快更：不翻清單，直接問官方「最近哪 50 筆被改過」。
+            # 不做下架判斷、不做完整性對帳 —— 那要整份清單才算得準。
+            rss_todo, rss_note, rss_oldest = rss_changed(fe, recs)
+            print(f"  {rss_note}")
+            fe.list_reqs = fe.reqs
+            last = (meta.get("last_run") or "")[:16]
+            if last and rss_oldest and rss_oldest > last:
+                print(f"！RSS 最舊的一筆是 {rss_oldest}，比你上次跑的 {last} 還新 ——"
+                      f"\n　 這中間的異動可能已經被擠出 50 筆榜外，建議補跑一次全站。")
+
         # --- 清單：站上有幾筆，這裡就看得到幾筆 ---
-        items, total, full_list = list_all(fe, a.limit, token)
+        items, total, full_list = ([], meta.get("site_total"), False) if a.rss \
+            else list_all(fe, a.limit, token)
         got_list = len(items)
         fe.list_reqs = fe.reqs
 
@@ -874,13 +949,15 @@ def main():
 
         # --- 要抓哪些內文 ---
         inner = [x for x in items if x["kind"] == "internal"]
-        if a.full or bench:
+        if a.rss:
+            todo = rss_todo                   # RSS 說有動過的才抓
+        elif a.full or bench:
             todo = inner                      # 全站／效能測試：清單上的全抓
         else:
             todo = [x for x in inner if not done_ok(recs.get(x["sid"]))]
         short = len(todo)
 
-        if a.refresh > 0 and not a.full and not bench:
+        if a.refresh > 0 and not a.full and not bench and not a.rss:
             # 清單看不到「資料更新」時間，舊資料被改偵測不到，所以輪流複查。
             # 用 meta 裡的游標輪，不存每筆的抓取時間 —— 那會讓 git diff 變八千行。
             keys = sorted(k for k, r in recs.items() if r.get("kind") == "internal")
@@ -980,7 +1057,7 @@ def main():
     if not a.dry_run:
         save_data(recs)
         save_html(htmls)
-        if not bench:        # 效能測試不要動「現況」，那是日常抓取的帳
+        if not no_reconcile:   # 沒對過帳的模式不要動「現況」那幾個數字
             meta.update({
                 "count": len(recs), "got": got, "with_content": body,
                 "gone_total": len(recs) - len(live), "site_total": total,
@@ -1034,7 +1111,10 @@ def main():
         os.remove(STOP)
 
     # --- 站上幾筆、我們幾筆，講清楚 ---
-    if bench:
+    if a.rss:
+        verdict = "（RSS 快更沒有翻清單，不做完整性對帳）"
+        total = meta.get("site_total")
+    elif bench:
         verdict = "（效能測試，不做完整性對帳）"
     elif not total:
         verdict = "（這次沒讀到站上總數）"
@@ -1066,7 +1146,7 @@ def main():
          blocked=fe.blocked, errors=fe.errors,
          t_wait=round(fe.t_wait, 2), t_read=round(fe.t_read, 2),
          t_parse=round(fe.t_parse, 3))
-    if note or (not bench and total and got != total):
+    if note or (not no_reconcile and total and got != total):
         sys.exit(2)
 
 
