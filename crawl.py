@@ -64,7 +64,10 @@ PROBE_N = 5              # 開跑前探測幾筆
 # 挨罰時是 +2000ms 以上，所以放寬到 1800ms 仍然抓得到。
 PROBE_LIMIT_MS = 1800 if os.environ.get("GITHUB_ACTIONS") else 800
 PROBE_RETRY_WAIT = 20    # 第一次探測偏高時，等幾秒再探一次才決定要不要放棄
-ABORT_AFTER_BLOCKS = 5   # 連續被擋這麼多次就停，不硬衝
+# 連續這麼多次拿到錯誤頁才整個停下來。原本的 app.py 就是用 30，
+# 我一度改成 5，結果站方偶爾丟一小段錯誤頁就會把長跑打斷。
+# 沒抓到的那幾筆本來就會跳過不覆蓋，下次補齊會補回來，不需要那麼神經質。
+ABORT_AFTER_BLOCKS = 30
 MAX_GONE_CHECK = 60      # 不在清單裡的超過這個數，當作清單沒抓完整，不判下架
 TIMEOUT = 30
 MAX_RETRY = 3
@@ -720,7 +723,10 @@ def main():
     ap.add_argument("--rate-ms", type=int, default=RATE_MS, help="每次請求間隔毫秒")
     ap.add_argument("--check", action="store_true", help="環境檢查")
     ap.add_argument("--dry-run", action="store_true", help="只看不寫")
-    ap.add_argument("--force", action="store_true", help="忽略探測結果硬跑")
+    ap.add_argument("--gate", action="store_true",
+                    help="探測到站方在限流就跳過本次（預設不判斷，設定什麼就抓什麼）")
+    ap.add_argument("--force", action="store_true",
+                    help="（現在預設就會抓，這個參數留著相容舊的批次檔）")
     a = ap.parse_args()
 
     if a.check:
@@ -762,22 +768,27 @@ def main():
             return ms
 
         ms = do_probe()
-        # 錯誤頁是「很快」回來的，只看速度抓不到。半數以上不是正常內文頁
-        # 就等於正在被擋，這種情況硬跑只會拿到一堆空白覆蓋好資料。
-        if bad * 2 >= PROBE_N and not a.force:
-            note = f"探測 {PROBE_N} 筆有 {bad} 筆是錯誤頁，站方正在擋"
-            raise Blocked(note + "，本次跳過")
-        if ms > PROBE_LIMIT_MS and not a.force:
-            # 不要一次就收工。限流「會來會走」，而且剛開跑時連線還沒熱，
-            # 第一輪偏高很常見 —— 等一下再探一次，真的還是慢才跳過。
-            print(f"！探測 {ms:.0f}ms 偏高（門檻 {PROBE_LIMIT_MS}ms），"
-                  f"等 {PROBE_RETRY_WAIT} 秒再探一次…")
-            time.sleep(PROBE_RETRY_WAIT)
-            ms = do_probe("（第二次）")
-            if ms > PROBE_LIMIT_MS:
-                note = f"探測兩次都超過 {PROBE_LIMIT_MS}ms（{ms:.0f}ms），站方正在限流"
+        # 探測只報數字，不攔人。保護資料的是下游那三道，它們看的是
+        # 「實際發生什麼」而不是「猜」：錯誤頁不寫入、空內容不覆蓋、
+        # 連續被擋 N 次才停。硬跑最壞就是慢、抓不到的下次補，資料不會壞。
+        # 要恢復「先探測再決定跑不跑」的行為就加 --gate。
+        if ms > PROBE_LIMIT_MS or bad:
+            print(f"　（站方回應偏慢或有錯誤頁，還是照抓 ——"
+                  f" 抓不到的會跳過不覆蓋，連續被擋 {ABORT_AFTER_BLOCKS} 次才停）")
+        if a.gate and not a.force:
+            if bad * 2 >= PROBE_N:
+                note = f"探測 {PROBE_N} 筆有 {bad} 筆是錯誤頁，站方正在擋"
                 raise Blocked(note + "，本次跳過")
-            print("  第二次探測正常，繼續。")
+            if ms > PROBE_LIMIT_MS:
+                print(f"！探測 {ms:.0f}ms 偏高（門檻 {PROBE_LIMIT_MS}ms），"
+                      f"等 {PROBE_RETRY_WAIT} 秒再探一次…")
+                time.sleep(PROBE_RETRY_WAIT)
+                ms = do_probe("（第二次）")
+                if ms > PROBE_LIMIT_MS:
+                    note = (f"探測兩次都超過 {PROBE_LIMIT_MS}ms"
+                            f"（{ms:.0f}ms），站方正在限流")
+                    raise Blocked(note + "，本次跳過")
+                print("  第二次探測正常，繼續。")
 
         fe.warm_up()
         token = date_token(fe, a.d_from, a.d_to) if (a.d_from or a.d_to) else ""
