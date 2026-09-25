@@ -27,7 +27,6 @@ if sys.platform == "win32":
             pass
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-DB = os.path.join(HERE, "faq.db")
 
 # ---- 站台常數 ---------------------------------------------------------------
 BASE = "https://www.gov.taipei"
