@@ -27,9 +27,38 @@ h1{margin:0;font-size:16px;color:#fff}
         grid-template-columns:190px minmax(0,1fr);gap:16px;align-items:start}
 .side{background:var(--card);border:1px solid var(--line);border-radius:10px;
       padding:8px;position:sticky;top:16px}
-.side button{display:block;width:100%;text-align:left;background:none;
-      border:0;border-radius:8px;padding:9px 12px;margin:0;font:inherit;
-      font-size:13.5px;font-weight:400;color:var(--ink);cursor:pointer}
+.side button{display:flex;align-items:center;gap:10px;width:100%;
+      text-align:left;background:none;border:0;border-radius:8px;
+      padding:9px 12px;margin:0;font:inherit;font-size:13.5px;
+      font-weight:400;color:var(--ink);cursor:pointer}
+.side button i{font-style:normal;width:18px;text-align:center;flex:0 0 auto}
+.side button.fold{justify-content:center;color:var(--dim);font-size:15px;
+      padding:4px;margin-bottom:4px}
+.side button.fold:hover{background:#eef2f7}
+
+/* 收合：只剩圖示，內容區變寬 */
+.layout.fold{grid-template-columns:52px minmax(0,1fr)}
+.layout.fold .side button span{display:none}
+.layout.fold .side button{justify-content:center;padding:9px 4px}
+.layout.fold .sidenote{display:none}
+
+/* 問答查詢：左邊局處分類，右邊結果 */
+.faqgrid{display:grid;grid-template-columns:210px minmax(0,1fr);gap:16px;
+      align-items:start}
+.orgs{border:1px solid var(--line);border-radius:8px;padding:8px}
+.orgs h4{margin:2px 6px 8px;font-size:12px;color:var(--dim);font-weight:600}
+.orgs h4 span{font-weight:400}
+#orglist{max-height:560px;overflow:auto}
+.orgs button{display:flex;width:100%;justify-content:space-between;gap:8px;
+      align-items:center;background:none;border:0;border-radius:6px;
+      padding:6px 8px;font:inherit;font-size:13px;font-weight:400;
+      color:var(--ink);cursor:pointer;text-align:left}
+.orgs button:hover{background:#eef2f7;filter:none}
+.orgs button.on{background:#e6f7f7;color:var(--deep);font-weight:600}
+.orgs button b{font-weight:400;color:var(--dim);font-variant-numeric:tabular-nums}
+.orgs button.on b{color:var(--deep)}
+@media (max-width:900px){.faqgrid{grid-template-columns:minmax(0,1fr)}
+  #orglist{max-height:180px}}
 .side button:hover{background:#eef2f7;filter:none}
 .side button.on{background:var(--navy);color:#fff;font-weight:600}
 .sidenote{font-size:12px;color:var(--dim);padding:10px 12px 4px;line-height:1.6}
@@ -158,13 +187,14 @@ mark{background:#ffe9a8;border-radius:2px}
 
 <div class="layout">
 <aside class="side">
-  <button data-page="faq" class="on">🔍　問答查詢</button>
-  <button data-page="data">📋　資料清單</button>
-  <button data-page="crawl">🕷　爬蟲工具</button>
-  <button data-page="stat">📊　資料概況</button>
-  <button data-page="fix">🛠　維護建議</button>
-  <button data-page="runs">⏱　執行紀錄</button>
-  <button data-page="chg">🔄　異動紀錄</button>
+  <button class="fold" id="fold" title="收合／展開選單">‹</button>
+  <button data-page="faq" class="on"><i>🔍</i><span>問答查詢</span></button>
+  <button data-page="data"><i>📋</i><span>資料清單</span></button>
+  <button data-page="crawl"><i>🕷</i><span>爬蟲工具</span></button>
+  <button data-page="stat"><i>📊</i><span>資料概況</span></button>
+  <button data-page="fix"><i>🛠</i><span>維護建議</span></button>
+  <button data-page="runs"><i>⏱</i><span>執行紀錄</span></button>
+  <button data-page="chg"><i>🔄</i><span>異動紀錄</span></button>
   <div class="sidenote" id="loading">載入資料中…</div>
 </aside>
 
@@ -247,10 +277,18 @@ mark{background:#ffe9a8;border-radius:2px}
       <label style="margin:0"><input type="checkbox" id="showgone"> 含已下架</label>
       <button class="ghost" id="csv">匯出 Excel</button>
     </div>
-    <div class="hint" id="count" style="margin:0 0 10px"></div>
-    <div id="list"></div>
-    <div style="text-align:center">
-      <button class="ghost" id="more" hidden>再顯示 200 筆</button>
+    <div class="faqgrid">
+      <aside class="orgs">
+        <h4>局處分類　<span id="orgn"></span></h4>
+        <div id="orglist"></div>
+      </aside>
+      <div>
+        <div class="hint" id="count" style="margin:0 0 10px"></div>
+        <div id="list"></div>
+        <div style="text-align:center">
+          <button class="ghost" id="more" hidden>再顯示 200 筆</button>
+        </div>
+      </div>
     </div>
   </section>
 </div>
@@ -556,8 +594,18 @@ function goPage(key){
     sec.hidden = sec.dataset.page!==key);
   scrollTo({top:0,behavior:'smooth'});
 }
-document.querySelectorAll('.side button').forEach(b=>
+document.querySelectorAll('.side button[data-page]').forEach(b=>
   b.onclick=()=>goPage(b.dataset.page));
+
+// 收合側欄，把版面讓給內容。記在 localStorage，下次打開維持同樣狀態。
+function setFold(on){
+  document.querySelector('.layout').classList.toggle('fold', on);
+  $('#fold').textContent = on ? '›' : '‹';
+  try{ localStorage.setItem('fold', on ? '1' : ''); }catch(e){}
+}
+$('#fold').onclick=()=>setFold(
+  !document.querySelector('.layout').classList.contains('fold'));
+try{ if(localStorage.getItem('fold')) setFold(true); }catch(e){}
 
 // ---- 問答查詢 --------------------------------------------------------------
 let LIST=[];
@@ -619,9 +667,47 @@ function snippet(r, ts){
   return '…' + hl(r.answer.slice(Math.max(0, i - 40), i + w + 80)
     .replace(/\n/g, ' '), ts) + '…';
 }
+// 局處分類的數字要跟著關鍵字、年份那些條件走，但不能被「機關」自己影響 ——
+// 否則選了衛生局之後，清單上就只剩衛生局一個，別的局處全部消失、換不回去。
+// 機關欄位是科室層級（臺北市政府衛生局食品藥物管理科），有 233 種、
+// 列出來根本找不到。收斂成局處層級（衛生局）剩 70 幾個，跟人腦裡的分類一致。
+// 點下去是把「衛生局」填進機關框，而機關是用包含比對，所以底下的科全部命中。
+const ORG_PREFIX=/^(臺北市政府|臺北市立|臺北市)/;
+// 不能收「會」這個單字 ——「社會局社會救助科」會在第二個字就被切成「社會」。
+// 要收的是完整的機關型態詞（委員會、公會、基金會…），不是任何帶會的字。
+const ORG_CUT=/^(.*?(?:管理委員會|委員會|基金會|公會|協會|中心|局|處|所|館|署|院|大隊|分局))/;
+function orgOf(dept){
+  const t=(dept||'').replace(ORG_PREFIX,'');
+  const m=ORG_CUT.exec(t);
+  return m ? m[1] : (t || '（未填）');
+}
+
+function orgPanel(){
+  const keep=$('#dept').value;
+  $('#dept').value='';
+  const base=filtered();
+  $('#dept').value=keep;
+  const m=new Map();
+  base.forEach(r=>{ const d=orgOf(r.dept); m.set(d,(m.get(d)||0)+1); });
+  const list=[...m].sort((a,b)=>b[1]-a[1]);
+  $('#orgn').textContent=`（${list.length} 機關）`;
+  $('#orglist').innerHTML=
+    `<button data-org="" class="${keep?'':'on'}">
+       <span>全部機關</span><b>${nf(base.length)}</b></button>`
+    + list.map(([d,n])=>`<button data-org="${esc(d)}"
+        class="${keep===d ? 'on':''}" title="${esc(d)}">
+        <span>${esc(d)}</span><b>${nf(n)}</b></button>`).join('');
+}
+$('#orglist').onclick=e=>{
+  const b=e.target.closest('[data-org]'); if(!b) return;
+  $('#dept').value=b.dataset.org;
+  render(true);
+};
+
 function render(reset){
   if(reset) shown=200;
   LIST=filtered();
+  orgPanel();
   const ts=terms();
   $('#count').textContent=`符合 ${nf(LIST.length)} 筆`+
     (LIST.length>shown?`，顯示前 ${nf(shown)} 筆`:'');
