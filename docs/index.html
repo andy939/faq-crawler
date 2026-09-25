@@ -318,8 +318,7 @@ mark{background:#ffe9a8;border-radius:2px}
       <div id="orglist2"></div>
     </aside>
     <div>
-  <div class="hint"><span class="badge" id="cnt">–</span>
-    <span id="bytesum"></span></div>
+  <div class="hint"><span class="badge" id="cnt">–</span></div>
   <input type="hidden" id="ddept">
   <div class="wrap" style="margin-top:10px">
     <table><thead><tr>
@@ -355,6 +354,9 @@ mark{background:#ffe9a8;border-radius:2px}
       <div class="box"><h4>下版日期維護</h4><div class="bars" id="s-exp"></div>
         <div class="hint">點數字會跳到問答查詢並套用條件。</div></div>
       <div class="box"><h4>內容長度</h4><div class="bars" id="s-len"></div></div>
+      <div class="box"><h4>位元效率</h4><div id="s-bytes"></div>
+        <div class="hint">抓一整頁只為了其中幾百 bytes。這是爬蟲的成本結構，
+          跟問答內容無關。</div></div>
     </div>
   </section>
 </div>
@@ -817,6 +819,21 @@ function stats(){
   live.forEach(r=>{const n=(r.answer||'').length;
     buck[n===0?0:n<200?1:n<1000?2:n<3000?3:4][1]++;});
   bars($('#s-len'), buck);
+
+  // 位元效率：抓一整頁 vs 真正留下來的那幾個欄位
+  const wr=live.map(r=>r.bytes_wire).filter(Boolean);
+  const rw=live.map(r=>r.bytes_raw).filter(Boolean);
+  const nd=live.map(r=>r.bytes_needed).filter(Boolean);
+  const line=(k,v)=>`<div class="b"><span class="l">${k}</span>
+     <span class="n" style="width:auto">${v}</span></div>`;
+  $('#s-bytes').innerHTML = nd.length ? [
+    line('抓下（gzip 後）', wr.length?nf(med(wr))+' B':'—'),
+    line('原始 HTML', rw.length?nf(med(rw))+' B':'—'),
+    line('真正需要', nf(med(nd))+' B'),
+    line('<b>中位浪費</b>', wr.length
+        ? `<b>${Math.round(med(wr)/med(nd))} 倍</b>` : '—'),
+    line('有效率', wr.length?(med(nd)/med(wr)*100).toFixed(2)+'%':'—'),
+  ].join('') : '（還沒有量測資料）';
 }
 
 // ---- 維護建議 --------------------------------------------------------------
@@ -1091,15 +1108,6 @@ function dataTable(){
   drawOrgs(ORG_DATA, base, keep);
   DROWS=applySort('data', dataRows(), DATA_ACC);
   $('#cnt').textContent=`符合 ${nf(DROWS.length)} 筆`;
-  const nd=DROWS.map(r=>r.bytes_needed).filter(Boolean);
-  const wr=DROWS.map(r=>r.bytes_wire).filter(Boolean);
-  $('#bytesum').innerHTML = nd.length
-    ? (wr.length?`　抓下 中位 <b>${nf(med(wr))}</b> byte`
-        +`（${nf(Math.min(...wr))}~${nf(Math.max(...wr))}）`:'')
-      +`　需要 中位 <b>${nf(med(nd))}</b> byte`
-      +`（${nf(Math.min(...nd))}~${nf(Math.max(...nd))}）`
-      +(wr.length?`　中位浪費 <b>${Math.round(med(wr)/med(nd))} 倍</b>`:'')
-    : '';
   $('#tb').innerHTML=DROWS.slice(0,300).map(r=>`<tr>
       <td>${esc((r.published||'').slice(0,10))}</td>
       <td>${esc(r.updated||'')}</td>
