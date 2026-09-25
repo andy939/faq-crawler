@@ -748,7 +748,8 @@ function render(reset){
       <div class="meta2">
         <span>${esc(r.dept)}</span>
         <span>發布 ${esc((r.published||'').slice(0,10)||'—')}</span>
-        ${r.expire?`<span>下版 ${esc(r.expire.slice(0,10))}</span>`:''}
+        ${r.updated?`<span title="${esc(r.updated)}">更新 ${
+          esc(r.updated.slice(0,10))}</span>`:''}
         ${r.files&&r.files.length?`<span class="badge">附件 ${r.files.length}</span>`:''}
         ${r.kind==='external'?'<span class="badge">外部連結</span>':''}
         ${r.gone?`<span class="badge gone">已下架 ${esc(r.gone)}</span>`:''}
