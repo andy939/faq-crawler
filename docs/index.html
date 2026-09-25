@@ -16,7 +16,8 @@ body{margin:0;font:14px/1.6 -apple-system,"PingFang TC","Microsoft JhengHei",
 /* 頂條：深藍，左邊標題＋一行式狀態，右邊去 GitHub */
 .topbar{background:var(--navy);color:#fff;padding:12px 22px;display:flex;
         align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap}
-.topbar .tt{display:flex;align-items:baseline;gap:14px;flex-wrap:wrap;min-width:0}
+.topbar .tt{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px}
+.topbar .links{display:flex;gap:16px;white-space:nowrap;flex:0 0 auto}
 .topbar a{color:#cfe3ff;text-decoration:none;font-size:13px;white-space:nowrap}
 .topbar a:hover{color:#fff;text-decoration:underline}
 h1{margin:0;font-size:16px;color:#fff}
@@ -138,7 +139,10 @@ mark{background:#ffe9a8;border-radius:2px}
     <h1>臺北市政府常見問答 · 爬蟲工作台</h1>
     <span class="meta" id="ov">載入中…</span>
   </div>
-  <a id="runlink" href="#" target="_blank" rel="noopener">在 GitHub 執行 ↗</a>
+  <div class="links">
+    <a id="repolink" href="#" target="_blank" rel="noopener">GitHub 倉庫 ↗</a>
+    <a id="runlink" href="#" target="_blank" rel="noopener">Actions 執行 ↗</a>
+  </div>
 </header>
 
 <div class="layout">
@@ -216,7 +220,7 @@ mark{background:#ffe9a8;border-radius:2px}
 <div class="card">
   <section id="tab-faq">
     <div class="row" style="align-items:center;margin-bottom:12px">
-      <input id="q" type="search" placeholder="關鍵字（標題與內容）"
+      <input id="q" type="search" placeholder="關鍵字，可用空白分隔多個詞，例如：生理 用品"
              style="flex:1;min-width:220px">
       <select id="dept"><option value="">全部機關</option></select>
       <select id="year"><option value="">全部年份</option></select>
@@ -246,7 +250,7 @@ mark{background:#ffe9a8;border-radius:2px}
   <div class="row">
     <div><label>發布時間 從</label><input id="d1" type="date"></div>
     <div><label>到</label><input id="d2" type="date"></div>
-    <div><label>關鍵字（標題／內容／機關）</label>
+    <div><label>關鍵字（空白分隔多個詞，都要符合）</label>
          <input id="dq" type="search" style="width:220px"></div>
     <button class="ghost" id="fil">篩選</button>
     <button class="ghost" id="clr">清除</button>
@@ -491,6 +495,9 @@ Promise.all([
 });
 
 function init(){
+  const repo = repoSlug();
+  $('#repolink').href = `https://github.com/${repo}`;
+  $('#runlink').href = `https://github.com/${repo}/actions/workflows/crawl.yml`;
   overview();
   const depts=[...new Set(ALL.map(r=>r.dept).filter(Boolean))]
     .sort((a,b)=>a.localeCompare(b,'zh-Hant'));
@@ -539,7 +546,7 @@ document.querySelectorAll('.side button').forEach(b=>
 // ---- 問答查詢 --------------------------------------------------------------
 let LIST=[];
 function filtered(){
-  const q=norm($('#q').value.trim()), dept=$('#dept').value,
+  const ts=terms(), dept=$('#dept').value,
         year=$('#year').value, onlyfile=$('#onlyfile').checked,
         gone=$('#showgone').checked, ex=$('#q').dataset.expire||'';
   const today=new Date().toISOString().slice(0,10);
@@ -554,8 +561,7 @@ function filtered(){
     if(ex==='none' && r.expire) return false;
     if(ex==='stale'){ const d=(r.reviewed||'').slice(0,10);
       if(!(r.kind!=='external' && d && d<plus(-365))) return false; }
-    if(q && !(norm(r.title).includes(q)||norm(r.answer).includes(q)||
-              norm(r.dept).includes(q))) return false;
+    if(!hit(r, ts)) return false;
     return true;
   });
   const s=$('#sort').value;
@@ -565,29 +571,47 @@ function filtered(){
     : (a,b)=>(b.published||'').localeCompare(a.published||''));
   return out;
 }
-function hl(text,q){
-  if(!q) return esc(text);
-  const i=norm(text).indexOf(q);
-  if(i<0) return esc(text);
-  return esc(text.slice(0,i))+'<mark>'+esc(text.slice(i,i+q.length))+'</mark>'+
-         esc(text.slice(i+q.length));
+// 關鍵字用空白分隔，每個詞都要出現（不限順序、不限位置）。
+// 因為常常不知道站上用的專有名詞 ——「生理 用品」要找得到「生理用品」，
+// 也要找得到標題寫「用品」而內文寫「生理」的那種。
+function terms(){
+  return norm($('#q').value).split(/\s+/).filter(Boolean);
 }
-function snippet(r,q){
-  if(!q||!r.answer) return '';
-  const i=norm(r.answer).indexOf(q);
-  if(i<0) return '';
-  return '…'+hl(r.answer.slice(Math.max(0,i-40),i+q.length+80)
-    .replace(/\n/g,' '),q)+'…';
+const reEsc = t => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+function hl(text, ts){
+  const out = esc(text);
+  if(!ts || !ts.length) return out;
+  const pat = ts.map(t => reEsc(esc(t))).filter(Boolean);
+  if(!pat.length) return out;
+  return out.replace(new RegExp('(' + pat.join('|') + ')', 'gi'),
+                     '<mark>$1</mark>');
+}
+function hit(r, ts){
+  if(!ts.length) return true;
+  const hay = norm(r.title) + ' ' + norm(r.answer) + ' ' + norm(r.dept);
+  return ts.every(t => hay.includes(t));
+}
+function snippet(r, ts){
+  if(!ts.length || !r.answer) return '';
+  const low = norm(r.answer);
+  let i = -1, w = 0;
+  for(const t of ts){                       // 取最早出現的那個詞當摘要起點
+    const k = low.indexOf(t);
+    if(k >= 0 && (i < 0 || k < i)){ i = k; w = t.length; }
+  }
+  if(i < 0) return '';
+  return '…' + hl(r.answer.slice(Math.max(0, i - 40), i + w + 80)
+    .replace(/\n/g, ' '), ts) + '…';
 }
 function render(reset){
   if(reset) shown=200;
   LIST=filtered();
-  const q=norm($('#q').value.trim());
+  const ts=terms();
   $('#count').textContent=`符合 ${nf(LIST.length)} 筆`+
     (LIST.length>shown?`，顯示前 ${nf(shown)} 筆`:'');
   $('#list').innerHTML=LIST.slice(0,shown).map((r,i)=>`
     <div class="item" data-i="${i}">
-      <h3>${hl(r.title,q)}</h3>
+      <h3>${hl(r.title,ts)}</h3>
       <div class="meta2">
         <span>${esc(r.dept)}</span>
         <span>發布 ${esc((r.published||'').slice(0,10)||'—')}</span>
@@ -596,7 +620,7 @@ function render(reset){
         ${r.kind==='external'?'<span class="badge">外部連結</span>':''}
         ${r.gone?`<span class="badge gone">已下架 ${esc(r.gone)}</span>`:''}
       </div>
-      ${snippet(r,q)?`<div class="meta2">${snippet(r,q)}</div>`:''}
+      ${snippet(r,ts)?`<div class="meta2">${snippet(r,ts)}</div>`:''}
     </div>`).join('');
   $('#more').hidden = LIST.length<=shown;
 }
@@ -798,14 +822,14 @@ $('#cf2').onchange=changes;
 let DROWS=[];
 
 function dataRows(){
-  const a=$('#d1').value, b=$('#d2').value, q=norm($('#dq').value.trim());
+  const a=$('#d1').value, b=$('#d2').value;
+  const ts=norm($('#dq').value).split(/\s+/).filter(Boolean);
   return ALL.filter(r=>{
     if(r.gone) return false;          // 已下架的不算在官網筆數裡
     const d=(r.published||'').slice(0,10);
     if(a && d<a) return false;
     if(b && d>b) return false;
-    if(q && !(norm(r.title).includes(q)||norm(r.answer).includes(q)||
-              norm(r.dept).includes(q))) return false;
+    if(!hit(r, ts)) return false;
     return true;
   }).sort((x,y)=>(y.published||'').localeCompare(x.published||''));
 }
