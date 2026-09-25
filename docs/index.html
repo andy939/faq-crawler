@@ -147,9 +147,9 @@ mark{background:#ffe9a8;border-radius:2px}
 
 <div class="layout">
 <aside class="side">
-  <button data-page="crawl" class="on">🕷　爬蟲工具</button>
-  <button data-page="faq">🔍　問答查詢</button>
+  <button data-page="faq" class="on">🔍　問答查詢</button>
   <button data-page="data">📋　資料清單</button>
+  <button data-page="crawl">🕷　爬蟲工具</button>
   <button data-page="stat">📊　資料概況</button>
   <button data-page="fix">🛠　維護建議</button>
   <button data-page="runs">⏱　執行紀錄</button>
@@ -158,7 +158,7 @@ mark{background:#ffe9a8;border-radius:2px}
 </aside>
 
 <main>
-<section data-page="crawl">
+<section data-page="crawl" hidden>
 <!-- ===== 抓取（只有本機工作台才會出現）===== -->
 <div class="card" id="panel" hidden>
   <h2>抓取</h2>
@@ -216,13 +216,15 @@ mark{background:#ffe9a8;border-radius:2px}
 
 </section>
 
-<section data-page="faq" hidden>
+<section data-page="faq">
 <div class="card">
   <section id="tab-faq">
     <div class="row" style="align-items:center;margin-bottom:12px">
       <input id="q" type="search" placeholder="關鍵字，可用空白分隔多個詞，例如：生理 用品"
              style="flex:1;min-width:220px">
-      <select id="dept"><option value="">全部機關</option></select>
+      <input id="dept" list="deptlist" placeholder="全部機關（打幾個字就好）"
+             style="width:230px">
+      <datalist id="deptlist"></datalist>
       <select id="year"><option value="">全部年份</option></select>
       <select id="sort">
         <option value="date-">發布日期新→舊</option>
@@ -302,7 +304,9 @@ mark{background:#ffe9a8;border-radius:2px}
   <section id="tab-fix">
     <div class="row" style="align-items:center;margin-bottom:12px">
       <select id="fx"><option value="">全部問題類型</option></select>
-      <select id="fd"><option value="">全部機關</option></select>
+      <input id="fd" list="fdlist" placeholder="全部機關（打幾個字就好）"
+             style="width:230px">
+      <datalist id="fdlist"></datalist>
       <button class="ghost" id="fcsv">匯出待修正清單 CSV</button>
       <span class="hint" id="f-count" style="margin:0"></span>
     </div>
@@ -501,8 +505,9 @@ function init(){
   overview();
   const depts=[...new Set(ALL.map(r=>r.dept).filter(Boolean))]
     .sort((a,b)=>a.localeCompare(b,'zh-Hant'));
-  $('#dept').innerHTML='<option value="">全部機關</option>'+
-    depts.map(d=>`<option>${esc(d)}</option>`).join('');
+  // 232 個機關用下拉太難選，改成打字篩選：打「教育」就只剩教育局那幾個。
+  // 而且不必選到完整名稱 —— 輸入什麼就當關鍵字比對機關欄位。
+  $('#deptlist').innerHTML=depts.map(d=>`<option>${esc(d)}</option>`).join('');
   const years=[...new Set(ALL.map(r=>(r.published||'').slice(0,4)).filter(Boolean))]
     .sort().reverse();
   $('#year').innerHTML='<option value="">全部年份</option>'+
@@ -552,7 +557,7 @@ function filtered(){
   const today=new Date().toISOString().slice(0,10);
   let out=ALL.filter(r=>{
     if(!gone && r.gone) return false;
-    if(dept && r.dept!==dept) return false;
+    if(dept && !norm(r.dept).includes(norm(dept))) return false;
     if(year && !(r.published||'').startsWith(year)) return false;
     if(onlyfile && !(r.files&&r.files.length)) return false;
     if(ex==='past' && !(r.expire && r.expire.slice(0,10)<today)) return false;
@@ -646,8 +651,9 @@ $('#list').onclick=e=>{
 let timer;
 $('#q').oninput=()=>{clearTimeout(timer);timer=setTimeout(()=>render(true),180);};
 $('#q').addEventListener('focus',()=>{delete $('#q').dataset.expire;});
-['#dept','#year','#sort','#onlyfile','#showgone'].forEach(s=>
+['#year','#sort','#onlyfile','#showgone'].forEach(s=>
   $(s).onchange=()=>render(true));
+$('#dept').oninput=()=>{clearTimeout(timer);timer=setTimeout(()=>render(true),180);};
 $('#more').onclick=()=>{shown+=200;render(false);};
 $('#csv').onclick=()=>download(
   `常見問答_${new Date().toISOString().slice(0,10)}_${LIST.length}筆.csv`,
@@ -715,13 +721,14 @@ function buildFix(){
   });
   $('#fx').innerHTML='<option value="">全部問題類型</option>'+
     [...new Set(FIX.map(f=>f.問題))].map(k=>`<option>${esc(k)}</option>`).join('');
-  $('#fd').innerHTML='<option value="">全部機關</option>'+
+  $('#fdlist').innerHTML=
     [...new Set(FIX.map(f=>f.機關))].sort((a,b)=>a.localeCompare(b,'zh-Hant'))
       .map(d=>`<option>${esc(d)}</option>`).join('');
   fix();
 }
 const fixRows=()=>FIX.filter(f=>(!$('#fx').value||f.問題===$('#fx').value)&&
-                                (!$('#fd').value||f.機關===$('#fd').value));
+                                (!$('#fd').value||
+                                 norm(f.機關).includes(norm($('#fd').value))));
 function fix(){
   const rows=fixRows();
   $('#f-count').textContent=`共 ${nf(rows.length)} 項待修正，`+
@@ -740,7 +747,7 @@ function fix(){
         rel="noopener">${esc(r.標題)}</a></td></tr>`).join('')+
     (rows.length>300?'<tr><td colspan="6">…只顯示前 300 列，完整清單請匯出 CSV</td></tr>':'');
 }
-$('#fx').onchange=fix; $('#fd').onchange=fix;
+$('#fx').onchange=fix; $('#fd').oninput=fix;
 $('#fcsv').onclick=()=>download(
   `待修正清單_${new Date().toISOString().slice(0,10)}.csv`,
   toCSV(fixRows(), ['機關','問題','說明','標題','發布日期','下版日期','最後檢視','網址']));
