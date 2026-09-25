@@ -429,6 +429,11 @@ mark{background:#ffe9a8;border-radius:2px}
         <option value="">全部動作</option><option>新增</option>
         <option>異動</option><option>下架</option><option>復原</option>
       </select>
+      <select id="cf3">
+        <option value="real" selected>只看實質變動（內容、標題、附件…）</option>
+        <option value="stamp">只看時間戳（檢視／更新時間）</option>
+        <option value="">全部</option>
+      </select>
       <span class="hint" id="c-count" style="margin:0"></span>
     </div>
     <div class="wrap"><table id="t-chg"></table></div>
@@ -996,10 +1001,25 @@ $('#runcsv').onclick=e=>toExcel('執行紀錄', RUNS.head,
 // ---- 異動紀錄 --------------------------------------------------------------
 const CHG_ACC=[r=>r['時間'], r=>r['動作'], r=>r['變動欄位'],
                r=>r['發布日期'], r=>r['機關'], r=>r['標題']];
+// 九個欄位任一個變了就記一筆，但實際上 99% 是「只有時間戳變」——
+// 市府系統碰一下那筆資料，檢視時間就跳，內容一個字都沒動。
+// 那種對「誰真的改了什麼」沒有意義，所以預設只看實質變動。
+const STAMP=new Set(['更新時間','檢視時間']);
+function realChange(r){
+  if(r['動作']!=='異動') return true;          // 新增／下架／復原一律算
+  const f=(r['變動欄位']||'').split('、').filter(Boolean);
+  return f.some(x=>!STAMP.has(x.replace(/\(.*/,'')));
+}
 function changes(){
-  const f=$('#cf2').value;
-  const rows=applySort('chg', CHG.filter(r=>!f||r['動作']===f), CHG_ACC);
-  $('#c-count').textContent=`共 ${nf(rows.length)} 筆，顯示最近 300 筆`;
+  const f=$('#cf2').value, kind=$('#cf3').value;
+  let base=CHG.filter(r=>!f||r['動作']===f);
+  if(kind==='real')  base=base.filter(realChange);
+  if(kind==='stamp') base=base.filter(r=>!realChange(r));
+  const rows=applySort('chg', base, CHG_ACC);
+  const hidden=CHG.length-rows.length;
+  $('#c-count').textContent=`共 ${nf(rows.length)} 筆`
+    + (rows.length>300?'，顯示最近 300 筆':'')
+    + (hidden?`（另有 ${nf(hidden)} 筆不符條件）`:'');
   if(!rows.length){ $('#t-chg').innerHTML='<tr><td>還沒有異動紀錄</td></tr>'; return; }
   $('#t-chg').innerHTML=
     '<tr><th>時間</th><th>動作</th><th>變動欄位</th><th>發布日期</th>'+
@@ -1013,7 +1033,7 @@ function changes(){
         rel="noopener">${esc(r['標題'])}</a></td></tr>`).join('');
   bindSort($('#t-chg'), 'chg', changes);
 }
-$('#cf2').onchange=changes;
+$('#cf2').onchange=changes; $('#cf3').onchange=changes;
 
 // ---- 資料 · 篩選與匯出（一筆一列）------------------------------------------
 // 「需要 byte」＝那幾個要留的欄位的 UTF-8 長度，跟 crawl.py 算的是同一組欄位。
