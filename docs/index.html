@@ -264,9 +264,7 @@ mark{background:#ffe9a8;border-radius:2px}
     <div class="row" style="align-items:center;margin-bottom:12px">
       <input id="q" type="search" placeholder="關鍵字，可用空白分隔多個詞，例如：生理 用品"
              style="flex:1;min-width:220px">
-      <input id="dept" list="deptlist" placeholder="全部機關（打幾個字就好）"
-             style="width:230px">
-      <datalist id="deptlist"></datalist>
+      <input type="hidden" id="dept">
       <select id="year"><option value="">全部年份</option></select>
       <select id="sort">
         <option value="date-">發布日期新→舊</option>
@@ -281,6 +279,7 @@ mark{background:#ffe9a8;border-radius:2px}
     <div class="faqgrid">
       <aside class="orgs">
         <h4>局處分類　<span id="orgn"></span></h4>
+        <input id="orgq" placeholder="篩選局處…" style="width:100%;margin:0 0 6px">
         <div id="orglist"></div>
       </aside>
       <div>
@@ -555,9 +554,7 @@ function init(){
   overview();
   const depts=[...new Set(ALL.map(r=>r.dept).filter(Boolean))]
     .sort((a,b)=>a.localeCompare(b,'zh-Hant'));
-  // 232 個機關用下拉太難選，改成打字篩選：打「教育」就只剩教育局那幾個。
-  // 而且不必選到完整名稱 —— 輸入什麼就當關鍵字比對機關欄位。
-  $('#deptlist').innerHTML=depts.map(d=>`<option>${esc(d)}</option>`).join('');
+  // 機關的選取改由左邊「局處分類」那一欄負責，#dept 只是存選到哪個局處
   const years=[...new Set(ALL.map(r=>(r.published||'').slice(0,4)).filter(Boolean))]
     .sort().reverse();
   $('#year').innerHTML='<option value="">全部年份</option>'+
@@ -691,8 +688,11 @@ function orgPanel(){
   $('#dept').value=keep;
   const m=new Map();
   base.forEach(r=>{ const d=orgOf(r.dept); m.set(d,(m.get(d)||0)+1); });
-  const list=[...m].sort((a,b)=>b[1]-a[1]);
-  $('#orgn').textContent=`（${list.length} 機關）`;
+  let list=[...m].sort((a,b)=>b[1]-a[1]);
+  const kw=norm($('#orgq').value.trim());
+  const all=list.length;
+  if(kw) list=list.filter(([d])=>norm(d).includes(kw));
+  $('#orgn').textContent=kw?`（${list.length}／${all} 機關）`:`（${all} 機關）`;
   $('#orglist').innerHTML=
     `<button data-org="" class="${keep?'':'on'}">
        <span>全部機關</span><b>${nf(base.length)}</b></button>`
@@ -752,7 +752,7 @@ $('#q').oninput=()=>{clearTimeout(timer);timer=setTimeout(()=>render(true),180);
 $('#q').addEventListener('focus',()=>{delete $('#q').dataset.expire;});
 ['#year','#sort','#onlyfile','#showgone'].forEach(s=>
   $(s).onchange=()=>render(true));
-$('#dept').oninput=()=>{clearTimeout(timer);timer=setTimeout(()=>render(true),180);};
+$('#orgq').oninput=orgPanel;      // 只篩左邊的清單，不動搜尋結果
 $('#more').onclick=()=>{shown+=200;render(false);};
 const FAQ_COLS=['標題','發布機關','發布時間','更新時間','檢視時間','下版日期',
   '維護單位','內容','附件','抓下byte','原始byte','需要byte','類型','已下架',
@@ -770,7 +770,8 @@ function stats(){
   const live=ALL.filter(r=>!r.gone);
   const by=f=>{const m=new Map();live.forEach(r=>{const k=f(r);
     if(k) m.set(k,(m.get(k)||0)+1);});return [...m].sort((a,b)=>b[1]-a[1]);};
-  bars($('#s-dept'), by(r=>r.dept).slice(0,15), k=>{$('#dept').value=k;goFaq();});
+  bars($('#s-dept'), by(r=>r.dept).slice(0,15),
+       k=>{$('#dept').value=orgOf(k);goFaq();});
   bars($('#s-year'), by(r=>(r.published||'').slice(0,4))
     .sort((a,b)=>b[0].localeCompare(a[0])), k=>{$('#year').value=k;goFaq();});
   const today=new Date().toISOString().slice(0,10), soon=plus(90), old=plus(-365);
