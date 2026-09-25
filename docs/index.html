@@ -309,8 +309,16 @@ mark{background:#ffe9a8;border-radius:2px}
     <button class="ghost" id="xls" hidden>匯出 Excel</button>
     <span class="hint" id="xlsmsg" style="margin:0;align-self:center"></span>
   </div>
+  <div class="faqgrid" style="margin-top:4px">
+    <aside class="orgs">
+      <h4>局處分類　<span id="orgn2"></span></h4>
+      <input id="orgq2" placeholder="篩選局處…" style="width:100%;margin:0 0 6px">
+      <div id="orglist2"></div>
+    </aside>
+    <div>
   <div class="hint"><span class="badge" id="cnt">–</span>
     <span id="bytesum"></span></div>
+  <input type="hidden" id="ddept">
   <div class="wrap" style="margin-top:10px">
     <table><thead><tr>
       <th>發布時間</th><th>更新時間</th><th>檢視時間</th><th>下版日期</th>
@@ -323,6 +331,8 @@ mark{background:#ffe9a8;border-radius:2px}
         <span style="font-weight:400;color:#9aa2ac">byte・那幾個欄位</span></th>
       <th>內容</th>
     </tr></thead><tbody id="tb"></tbody></table>
+  </div>
+    </div>
   </div>
   <div class="hint">
     「抓下」是這一筆真正流過網路的位元組（gzip 壓縮後的整頁 HTML），
@@ -686,30 +696,40 @@ function orgOf(dept){
   return m ? m[1] : (t || '（未填）');
 }
 
-function orgPanel(){
-  const keep=$('#dept').value;
-  $('#dept').value='';
-  const base=filtered();
-  $('#dept').value=keep;
+// 問答查詢與資料清單各有一份，長相與行為一樣，只是吃不同的資料來源
+function drawOrgs(ids, records, keep){
   const m=new Map();
-  base.forEach(r=>{ const d=orgOf(r.dept); m.set(d,(m.get(d)||0)+1); });
+  records.forEach(r=>{ const d=orgOf(r.dept); m.set(d,(m.get(d)||0)+1); });
   let list=[...m].sort((a,b)=>b[1]-a[1]);
-  const kw=norm($('#orgq').value.trim());
+  const kw=norm($(ids.q).value.trim());
   const all=list.length;
   if(kw) list=list.filter(([d])=>norm(d).includes(kw));
-  $('#orgn').textContent=kw?`（${list.length}／${all} 機關）`:`（${all} 機關）`;
-  $('#orglist').innerHTML=
+  $(ids.n).textContent=kw?`（${list.length}／${all} 機關）`:`（${all} 機關）`;
+  $(ids.list).innerHTML=
     `<button data-org="" class="${keep?'':'on'}">
-       <span>全部機關</span><b>${nf(base.length)}</b></button>`
+       <span>全部機關</span><b>${nf(records.length)}</b></button>`
     + list.map(([d,n])=>`<button data-org="${esc(d)}"
         class="${keep===d ? 'on':''}" title="${esc(d)}">
         <span>${esc(d)}</span><b>${nf(n)}</b></button>`).join('');
 }
-$('#orglist').onclick=e=>{
-  const b=e.target.closest('[data-org]'); if(!b) return;
-  $('#dept').value=b.dataset.org;
-  render(true);
-};
+function bindOrgs(ids, sel, rerender){
+  $(ids.list).onclick=e=>{
+    const b=e.target.closest('[data-org]'); if(!b) return;
+    $(sel).value=b.dataset.org;
+    rerender();
+  };
+  $(ids.q).oninput=rerender;     // 只篩左邊的清單，不動結果
+}
+
+const ORG_FAQ={n:'#orgn', list:'#orglist', q:'#orgq'};
+function orgPanel(){
+  const keep=$('#dept').value;
+  $('#dept').value='';           // 算數字時先拿掉機關條件（facet 的標準作法）
+  const base=filtered();
+  $('#dept').value=keep;
+  drawOrgs(ORG_FAQ, base, keep);
+}
+bindOrgs(ORG_FAQ, '#dept', ()=>render(true));
 
 function render(reset){
   if(reset) shown=200;
@@ -1049,6 +1069,8 @@ function dataRows(){
     if(a && d<a) return false;
     if(b && d>b) return false;
     if(!hit(r, ts)) return false;
+    const dd=$('#ddept').value;
+    if(dd && orgOf(r.dept)!==dd) return false;
     return true;
   }).sort((x,y)=>(y.published||'').localeCompare(x.published||''));
 }
@@ -1058,7 +1080,13 @@ const DATA_ACC=[r=>(r.published||'').slice(0,10), r=>r.updated||'',
                 r=>r.reviewed||'', r=>r.expire||'', r=>r.title||'',
                 r=>r.dept||'', r=>r.bytes_wire||0, r=>r.bytes_raw||0,
                 r=>r.bytes_needed||0, r=>r.answer||''];
+const ORG_DATA={n:'#orgn2', list:'#orglist2', q:'#orgq2'};
 function dataTable(){
+  const keep=$('#ddept').value;
+  $('#ddept').value='';
+  const base=dataRows();
+  $('#ddept').value=keep;
+  drawOrgs(ORG_DATA, base, keep);
   DROWS=applySort('data', dataRows(), DATA_ACC);
   $('#cnt').textContent=`符合 ${nf(DROWS.length)} 筆`;
   const nd=DROWS.map(r=>r.bytes_needed).filter(Boolean);
@@ -1091,8 +1119,10 @@ function dataTable(){
       `…只顯示前 300 筆，其餘請匯出（共 ${nf(DROWS.length)} 筆）</td></tr>`;
   bindSort($('#tb').closest('table'), 'data', dataTable);
 }
+bindOrgs(ORG_DATA, '#ddept', dataTable);
 $('#fil').onclick=dataTable;
-$('#clr').onclick=()=>{$('#d1').value=$('#d2').value=$('#dq').value='';dataTable();};
+$('#clr').onclick=()=>{$('#d1').value=$('#d2').value=$('#dq').value='';
+  $('#ddept').value=''; dataTable();};
 // ---- GitHub Actions 現況（公開 API，不需要登入）----------------------------
 const DOT={success:['✔','var(--deep)'], failure:['✖','var(--danger)'],
            cancelled:['■','var(--dim)'], skipped:['–','var(--dim)'],
