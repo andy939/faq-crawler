@@ -170,6 +170,19 @@ mark{background:#ffe9a8;border-radius:2px}
 .act.新增,.act.復原{color:var(--deep)}
 .act.異動{color:var(--warn)}
 .act.下架{color:var(--danger)}
+/* 維護建議：標題重複的並排比對 */
+button.cmp{padding:2px 8px;font-size:12px;margin-left:6px}
+tr.cmp-row td{background:#fafbfc;padding:10px 12px}
+.dups{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:10px}
+.dup{border:1px solid var(--line);border-radius:8px;background:var(--card);
+     padding:10px 12px;min-width:0}
+.dup .dh{display:flex;flex-wrap:wrap;justify-content:space-between;gap:6px;
+         font-size:13px;margin-bottom:6px}
+.dup .dh span{color:var(--dim);font-size:12px}
+.dup .db{white-space:pre-wrap;font-size:13.5px;line-height:1.75;
+         max-height:320px;overflow:auto}
+.dup .df{margin-top:8px;font-size:12.5px}
+.dup .df a{display:inline-block;margin:2px 0}
 #loading{padding:40px 0;color:var(--dim);text-align:center}
 </style>
 </head>
@@ -383,7 +396,7 @@ mark{background:#ffe9a8;border-radius:2px}
       這一頁是拿來發給各局處的。<b>已過期還掛著</b>是下版日期已經過了但問答還在站上；
       <b>沒設下版日期</b>表示不會自動下架，需要人工盯；<b>一年以上沒檢視</b>只看站上的
       「資料檢視」欄位，沒有值就不算（不會拿發布或更新時間頂替）；<b>沒有內容</b>是內文空白且沒有附件；<b>標題重複</b>是同一個標題
-      在站上出現一次以上。匯出的 CSV 一列一個問題，可以直接按機關拆給承辦。
+      在站上出現一次以上，說明會註明內容一致或不同，按「比對」可以並排看差在哪。匯出的 CSV 一列一個問題，可以直接按機關拆給承辦。
     </div>
   </section>
 </div>
@@ -838,13 +851,84 @@ function stats(){
 }
 
 // ---- 維護建議 --------------------------------------------------------------
-let FIX=[];
+// 標題重複不代表內容重複：同一個問題，兩個機關各寫一份，常常只差幾個字
+// 或一個寫得比另一個新。所以要比內容，不同的話要能並排看差在哪。
+const dupText = r => (r.answer||'').replace(/\r/g,'').split('\n')
+  .map(l=>l.replace(/[ \t　 ]+/g,' ').trim()).filter(Boolean).join('\n');
+// 判斷一不一致時連空白、換行都不算，附件看檔名
+const dupKey = r => dupText(r).replace(/\s+/g,'') + '|' +
+  (r.files||[]).map(f=>f.name||'').sort().join('|');
+
+// 逐字比對（最長共同子序列）。回傳相似度與兩邊各自的片段，
+// 片段是 [只有這邊有?, 文字]。太長就不比（n×m 格的表格會吃太多記憶體），回傳 null。
+function lcsDiff(a, b){
+  const A=Array.from(a), B=Array.from(b), n=A.length, m=B.length;
+  if(!n && !m) return {ratio:1, sa:[], sb:[]};
+  if(n*m > 4e6) return null;
+  const W=m+1, dp=new Uint16Array((n+1)*W);          // dp[i][j] = A[i:] 與 B[j:] 的 LCS
+  for(let i=n-1;i>=0;i--) for(let j=m-1;j>=0;j--)
+    dp[i*W+j] = A[i]===B[j] ? dp[(i+1)*W+j+1]+1
+                            : Math.max(dp[(i+1)*W+j], dp[i*W+j+1]);
+  const sa=[], sb=[];
+  const push=(arr,own,ch)=>{const t=arr[arr.length-1];
+    if(t && t[0]===own) t[1]+=ch; else arr.push([own,ch]);};
+  let i=0, j=0;
+  while(i<n && j<m){
+    if(A[i]===B[j]){ push(sa,false,A[i++]); push(sb,false,B[j++]); }
+    else if(dp[(i+1)*W+j] >= dp[i*W+j+1]) push(sa,true,A[i++]);
+    else push(sb,true,B[j++]);
+  }
+  while(i<n) push(sa,true,A[i++]);
+  while(j<m) push(sb,true,B[j++]);
+  return {ratio: 2*dp[0]/(n+m), sa, sb};
+}
+
+let FIX=[], DUPS=new Map();           // 標題 → 同標題的那幾筆
+function dupNote(r){
+  const g=DUPS.get((r.title||'').trim());
+  if(g.every(x=>dupKey(x)===dupKey(g[0]))) return `同樣標題有 ${g.length} 筆，內容一致`;
+  // 跟同組其他筆比，取最不像的那一個
+  let lo=1;
+  for(const x of g){ if(x===r) continue;
+    const d=lcsDiff(dupText(r), dupText(x)); if(!d){lo=null;break;}
+    lo=Math.min(lo,d.ratio); }
+  return `同樣標題有 ${g.length} 筆，內容不同` +
+    (lo===null ? '' : `（相似 ${Math.floor(lo*100)}%）`);
+}
+function dupCompare(title){
+  const g=DUPS.get(title); if(!g) return '';
+  const texts=g.map(dupText);
+  // 第一筆跟第二筆比，其餘每筆跟第一筆比 —— 黃底就是「另一邊沒有的字」
+  const segs=g.map((r,i)=>{
+    const d = i===0 ? lcsDiff(texts[0],texts[1]) : lcsDiff(texts[i],texts[0]);
+    return d ? d.sa : [[false,texts[i]]];
+  });
+  const names=g.map(r=>new Set((r.files||[]).map(f=>f.name)));
+  const col=(r,i)=>{
+    const other = names[i===0?1:0];
+    const files=(r.files||[]).map(f=>{const s=`<a href="${esc(f.url)}" target="_blank"
+        rel="noopener">📎 ${esc(f.name)}</a>`;
+      return other.has(f.name) ? s : `<mark>${s}</mark>`;}).join('');
+    return `<div class="dup">
+      <div class="dh"><b>${esc(r.dept||'（未填）')}</b>
+        <span>發布 ${esc((r.published||'').slice(0,10))||'—'}
+          檢視 ${esc((r.reviewed||'').slice(0,10))||'—'}
+          <a href="${esc(r.url)}" target="_blank" rel="noopener">官網 ↗</a></span></div>
+      <div class="db">${segs[i].map(([own,t])=>own?`<mark>${esc(t)}</mark>`:esc(t)).join('')
+        || '<span class="hint">（沒有內文）</span>'}</div>
+      ${files?`<div class="df">${files}</div>`:''}</div>`;
+  };
+  return `<div class="dups">${g.map(col).join('')}</div>
+    <div class="hint" style="margin:6px 0 0">黃底＝另一筆沒有的文字或附件`+
+    (g.length>2?'（第一筆對第二筆，其餘各筆對第一筆）':'')+'。</div>';
+}
+
 function buildFix(){
   const live=ALL.filter(r=>!r.gone);
   const today=new Date().toISOString().slice(0,10), old=plus(-365);
-  const titles=new Map();
+  DUPS=new Map();
   live.forEach(r=>{const k=(r.title||'').trim();
-    if(k) titles.set(k,(titles.get(k)||0)+1);});
+    if(k) DUPS.set(k,[...(DUPS.get(k)||[]),r]);});
   FIX=[];
   live.forEach(r=>{
     const exp=(r.expire||'').slice(0,10);
@@ -863,8 +947,7 @@ function buildFix(){
     if(r.kind!=='external' && !r.answer && !(r.files&&r.files.length))
       add('沒有內容','內文空白且沒有附件');
     if(r.kind==='external') add('連到外部網站','內容不在市府網站，連結可能失效');
-    if(titles.get((r.title||'').trim())>1)
-      add('標題重複',`同樣標題有 ${titles.get(r.title.trim())} 筆`);
+    if(DUPS.get((r.title||'').trim())?.length>1) add('標題重複', dupNote(r));
   });
   $('#fx').innerHTML='<option value="">全部問題類型</option>'+
     [...new Set(FIX.map(f=>f.問題))].map(k=>`<option>${esc(k)}</option>`).join('');
@@ -890,7 +973,9 @@ function fix(){
     '<tr><th>問題</th><th>說明</th><th>機關</th><th>下版日期</th>'+
     '<th>最後檢視</th><th>標題</th></tr>'+
     rows.slice(0,300).map(r=>`<tr>
-      <td class="act 異動">${esc(r.問題)}</td><td>${esc(r.說明)}</td>
+      <td class="act 異動">${esc(r.問題)}</td><td>${esc(r.說明)}${r.問題==='標題重複'
+        ? ` <button class="ghost cmp" data-t="${esc((r.標題||'').trim())}">比對 ▾</button>`
+        : ''}</td>
       <td>${esc(r.機關)}</td><td>${esc(r.下版日期)}</td><td>${esc(r.最後檢視)}</td>
       <td class="t"><a href="${esc(r.網址)}" target="_blank"
         rel="noopener">${esc(r.標題)}</a></td></tr>`).join('')+
@@ -898,6 +983,15 @@ function fix(){
   bindSort($('#t-fix'), 'fix', fix);
 }
 $('#fx').onchange=fix; $('#fd').oninput=fix;
+// 按「比對」在那一列底下展開並排比較，再按一次收起來
+$('#t-fix').addEventListener('click', e=>{
+  const b=e.target.closest('button.cmp'); if(!b) return;
+  const tr=b.closest('tr'), nx=tr.nextElementSibling;
+  if(nx && nx.classList.contains('cmp-row')){ nx.remove(); b.textContent='比對 ▾'; return; }
+  tr.insertAdjacentHTML('afterend',
+    `<tr class="cmp-row"><td colspan="6">${dupCompare(b.dataset.t)}</td></tr>`);
+  b.textContent='收起 ▴';
+});
 const FIX_COLS=['機關','問題','說明','標題','發布日期','下版日期','最後檢視','網址'];
 $('#fcsv').onclick=e=>toExcel('待修正清單', FIX_COLS,
   fixRows().map(f=>FIX_COLS.map(c=>f[c])), e.target);

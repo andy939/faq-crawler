@@ -27,6 +27,54 @@ from openpyxl.utils import get_column_letter
 
 import crawl as C
 
+
+# ---- 標題重複：比內容 --------------------------------------------------------
+# 跟網頁工作台（docs/index.html 的 dupText / dupKey / lcsDiff）同一套算法，
+# 兩邊印出來的相似度才會一樣。
+
+def dup_text(r):
+    lines = (r.get("answer") or "").replace("\r", "").split("\n")
+    lines = [re.sub(r"[ \t\u3000\u00a0]+", " ", l).strip() for l in lines]
+    return "\n".join(l for l in lines if l)
+
+
+def dup_key(r):
+    return re.sub(r"\s+", "", dup_text(r)) + "|" + \
+        "|".join(sorted((f.get("name") or "") for f in (r.get("files") or [])))
+
+
+def lcs_ratio(a, b):
+    """逐字最長共同子序列的相似度；太長不比，回傳 None。"""
+    n, m = len(a), len(b)
+    if not n and not m:
+        return 1.0
+    if n * m > 4_000_000:
+        return None
+    prev = [0] * (m + 1)
+    for i in range(n - 1, -1, -1):
+        cur = [0] * (m + 1)
+        ai = a[i]
+        for j in range(m - 1, -1, -1):
+            cur[j] = prev[j + 1] + 1 if ai == b[j] else max(prev[j], cur[j + 1])
+        prev = cur
+    return 2 * prev[0] / (n + m)
+
+
+def dup_note(r, group):
+    if all(dup_key(x) == dup_key(group[0]) for x in group):
+        return f"同樣標題有 {len(group)} 筆，內容一致"
+    lo = 1.0
+    for x in group:
+        if x is r:
+            continue
+        v = lcs_ratio(dup_text(r), dup_text(x))
+        if v is None:
+            lo = None
+            break
+        lo = min(lo, v)
+    return f"同樣標題有 {len(group)} 筆，內容不同" + \
+        ("" if lo is None else f"（相似 {int(lo * 100)}%）")
+
 # openpyxl 不收控制字元，內文偶爾會混到 \x00-\x1f，不濾掉匯出就會炸
 CTRL = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f]")
 HEAD_FILL = PatternFill("solid", fgColor="1A6A5A")
@@ -179,7 +227,11 @@ def main():
                   11, 11, 10, 10, 11, 60], links=("網址",))
 
     # ---------- 維護建議 ----------
-    titles = Counter((r.get("title") or "").strip() for r in live)
+    dups = {}
+    for r in live:
+        k = (r.get("title") or "").strip()
+        if k:
+            dups.setdefault(k, []).append(r)
     old = time.strftime("%Y-%m-%d", time.localtime(time.time() - 365 * 86400))
     soon = time.strftime("%Y-%m-%d", time.localtime(time.time() + 90 * 86400))
     fix = []
@@ -207,8 +259,9 @@ def main():
             add("沒有內容", "內文空白且沒有附件")
         if r.get("kind") == "external":
             add("連到外部網站", "內容不在市府網站，連結可能失效")
-        if titles[(r.get("title") or "").strip()] > 1:
-            add("標題重複", f"同樣標題有 {titles[(r.get('title') or '').strip()]} 筆")
+        group = dups.get((r.get("title") or "").strip(), [])
+        if len(group) > 1:
+            add("標題重複", dup_note(r, group))
         if exp and today <= exp <= soon:
             add("90 天內到期", f"下版日期 {exp}")
     fix.sort(key=lambda x: (x[0], x[1]))
