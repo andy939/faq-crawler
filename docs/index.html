@@ -86,6 +86,8 @@ section[data-page]{display:grid;gap:16px}
 .row{display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end;min-width:0}
 .row>div{min-width:0}
 label{display:block;font-size:12px;color:var(--dim);margin-bottom:4px}
+/* 標籤跟輸入框排同一行，短欄位不值得為了標籤多吃一整列 */
+label.inline{display:flex;align-items:center;gap:6px;margin:0;font-size:12.5px}
 select,input,button{font:inherit;padding:7px 10px;border:1px solid var(--line);
                     border-radius:7px;background:#fff;color:var(--ink)}
 button{background:var(--accent);color:#fff;border-color:transparent;cursor:pointer;
@@ -298,11 +300,12 @@ mark{background:#ffe9a8;border-radius:2px}
 <!-- ===== 資料 · 篩選與匯出（一筆一列，每個欄位都列出來）===== -->
 <div class="card">
   <h2>資料 · 篩選與匯出</h2>
-  <div class="row">
-    <div><label>發布時間 從</label><input id="d1" type="date"></div>
-    <div><label>到</label><input id="d2" type="date"></div>
-    <div><label>關鍵字（空白分隔多個詞，都要符合）</label>
-         <input id="dq" type="search" style="width:220px"></div>
+  <div class="row" style="align-items:center">
+    <label class="inline">發布時間 從<input id="d1" type="date"></label>
+    <label class="inline">到<input id="d2" type="date"></label>
+    <label class="inline" style="flex:1;min-width:240px">關鍵字
+      <input id="dq" type="search" style="flex:1"
+             placeholder="可用空白分隔多個詞，都要符合"></label>
     <button class="ghost" id="fil">篩選</button>
     <button class="ghost" id="clr">清除</button>
     <span style="flex:1"></span>
