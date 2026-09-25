@@ -174,6 +174,45 @@ def build_args(q):
     return label, args
 
 
+def write_xlsx(body):
+    """把網頁送來的列寫成 Excel，回傳檔名。
+
+    body = {name, sheet, cols:[欄位名], rows:[[值, …], …]}
+    欄寬照內容自動估，第一列凍結並開篩選 —— 開起來就能直接用。
+    """
+    from openpyxl import Workbook
+    from openpyxl.styles import Alignment, Font, PatternFill
+    from openpyxl.utils import get_column_letter
+
+    cols = body.get("cols") or []
+    rows = body.get("rows") or []
+    wb = Workbook()
+    ws = wb.active
+    ws.title = (body.get("sheet") or "資料")[:31]
+    ws.append(cols)
+    ctrl = __import__("re").compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f]")
+    for r in rows:
+        ws.append([ctrl.sub("", v)[:32000] if isinstance(v, str) else v
+                   for v in r])
+    fill = PatternFill("solid", fgColor="1A6A5A")
+    font = Font(bold=True, color="FFFFFF")
+    for i, c in enumerate(cols, 1):
+        cell = ws.cell(row=1, column=i)
+        cell.fill, cell.font = fill, font
+        cell.alignment = Alignment(vertical="center")
+        w = max([len(str(c)) * 2] + [len(str(r[i - 1])) for r in rows[:200]
+                                     if i <= len(r)][:200] or [10])
+        ws.column_dimensions[get_column_letter(i)].width = min(max(w, 10), 60)
+    ws.freeze_panes = "A2"
+    if rows:
+        ws.auto_filter.ref = ws.dimensions
+
+    base = (body.get("name") or "匯出").replace("/", "_").replace("\\", "_")
+    name = f"{base}_{time.strftime('%Y%m%d_%H%M%S')}.xlsx"
+    wb.save(os.path.join(HERE, name))
+    return name
+
+
 def latest_wire():
     """從 exports/ 的逐筆測量檔撈出每一筆的「抓下 byte」，新的蓋舊的。"""
     out = {}
@@ -239,6 +278,8 @@ class Handler(SimpleHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(body)
             return
+        if path == "/api/xlsx":
+            return self._json({"ok": False, "msg": "請用 POST"}, 405)
         if path == "/api/samples":
             # 逐筆的「抓下 byte」只存在 exports/ 的測量檔裡（那是每次抓取的
             # 量測值，不是問答本身的屬性，所以沒進 faq.json）。
@@ -249,6 +290,17 @@ class Handler(SimpleHTTPRequestHandler):
     def do_POST(self):
         path, _, qs = self.path.partition("?")
         q = urllib.parse.parse_qs(qs)
+        if path == "/api/xlsx":
+            # 網頁把「目前畫面上篩出來的那些列」送過來，這裡寫成 xlsx。
+            # 瀏覽器自己做不出真正的 Excel 檔（要額外的函式庫），但後端
+            # 本來就有 openpyxl，交給它最省事也最不會有編碼問題。
+            try:
+                n = int(self.headers.get("Content-Length") or 0)
+                body = json.loads(self.rfile.read(n).decode("utf-8"))
+                name = write_xlsx(body)
+            except Exception as e:
+                return self._json({"ok": False, "msg": f"{type(e).__name__}: {e}"}, 500)
+            return self._json({"ok": True, "file": name})
         if path == "/api/stop":
             return self._json({"ok": JOB.stop()})
         if path == "/api/tool":

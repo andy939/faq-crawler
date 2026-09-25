@@ -81,7 +81,9 @@ table{width:100%;border-collapse:collapse;font-size:13px}
 th,td{text-align:left;padding:7px 10px;border-bottom:1px solid var(--line);
       vertical-align:top;white-space:nowrap}
 th{color:var(--dim);font-weight:600;font-size:11.5px;position:sticky;top:0;
-   background:var(--card);z-index:1}
+   background:var(--card);z-index:1;user-select:none}
+th:hover{color:var(--ink)}
+.arrow{color:var(--accent)}
 td.num,th.num{text-align:right;font-variant-numeric:tabular-nums}
 .sep{border-left:1px solid var(--line)}
 /* 表格裡的長文字（標題、內容）固定單行，超出用「…」。
@@ -239,7 +241,7 @@ mark{background:#ffe9a8;border-radius:2px}
       </select>
       <label style="margin:0"><input type="checkbox" id="onlyfile"> 只看有附件</label>
       <label style="margin:0"><input type="checkbox" id="showgone"> 含已下架</label>
-      <button class="ghost" id="csv">匯出 CSV</button>
+      <button class="ghost" id="csv">匯出 Excel</button>
     </div>
     <div class="hint" id="count" style="margin:0 0 10px"></div>
     <div id="list"></div>
@@ -312,7 +314,7 @@ mark{background:#ffe9a8;border-radius:2px}
       <input id="fd" list="fdlist" placeholder="全部機關（打幾個字就好）"
              style="width:230px">
       <datalist id="fdlist"></datalist>
-      <button class="ghost" id="fcsv">匯出待修正清單 CSV</button>
+      <button class="ghost" id="fcsv">匯出待修正清單 Excel</button>
       <span class="hint" id="f-count" style="margin:0"></span>
     </div>
     <div class="grid" style="margin-bottom:14px">
@@ -362,7 +364,7 @@ mark{background:#ffe9a8;border-radius:2px}
     </tr></thead><tbody id="rt"></tbody></table>
   </div>
   <div class="row" style="margin-top:10px">
-    <button class="ghost" id="runcsv">匯出測試紀錄 CSV</button>
+    <button class="ghost" id="runcsv">匯出測試紀錄 Excel</button>
     <span style="flex:1"></span>
     <span style="color:var(--dim);font-size:12.5px">
       每次執行也會自動存一份逐筆原始資料到 exports/ 資料夾，檔名帶日期時間與抓法</span>
@@ -660,13 +662,15 @@ $('#q').addEventListener('focus',()=>{delete $('#q').dataset.expire;});
   $(s).onchange=()=>render(true));
 $('#dept').oninput=()=>{clearTimeout(timer);timer=setTimeout(()=>render(true),180);};
 $('#more').onclick=()=>{shown+=200;render(false);};
-$('#csv').onclick=()=>download(
-  `常見問答_${new Date().toISOString().slice(0,10)}_${LIST.length}筆.csv`,
-  toCSV(LIST.map(r=>({...r,
-      files:(r.files||[]).map(f=>f.name).join(' | '),
-      answer:(r.answer||'').replace(/\s+/g,' ')})),
-    ['sid','title','dept','published','updated','reviewed','expire',
-     'maintainer','answer','files','url','kind','gone']));
+const FAQ_COLS=['標題','發布機關','發布時間','更新時間','檢視時間','下版日期',
+  '維護單位','內容','附件','抓下byte','原始byte','需要byte','類型','已下架',
+  '網址','sid'];
+$('#csv').onclick=e=>toExcel('常見問答', FAQ_COLS, LIST.map(r=>[
+  r.title, r.dept, (r.published||'').slice(0,10), r.updated, r.reviewed,
+  r.expire, r.maintainer, (r.answer||'').replace(/[\s]+/g,' '),
+  (r.files||[]).map(f=>f.name).join(' | '),
+  r.bytes_wire||0, r.bytes_raw||0, r.bytes_needed||0,
+  r.kind==='external'?'外部連結':'站內', r.gone||'', r.url, r.sid]), e.target);
 
 // ---- 資料概況 --------------------------------------------------------------
 function goFaq(){ goPage('faq'); render(true); }
@@ -734,8 +738,10 @@ function buildFix(){
 const fixRows=()=>FIX.filter(f=>(!$('#fx').value||f.問題===$('#fx').value)&&
                                 (!$('#fd').value||
                                  norm(f.機關).includes(norm($('#fd').value))));
+const FIX_ACC=[r=>r.問題, r=>r.說明, r=>r.機關, r=>r.下版日期,
+               r=>r.最後檢視, r=>r.標題];
 function fix(){
-  const rows=fixRows();
+  const rows=applySort('fix', fixRows(), FIX_ACC);
   $('#f-count').textContent=`共 ${nf(rows.length)} 項待修正，`+
     `涉及 ${nf(new Set(rows.map(r=>r.sid)).size)} 筆問答`;
   const tally=f=>{const m=new Map();rows.forEach(r=>m.set(r[f],(m.get(r[f])||0)+1));
@@ -751,11 +757,82 @@ function fix(){
       <td class="t"><a href="${esc(r.網址)}" target="_blank"
         rel="noopener">${esc(r.標題)}</a></td></tr>`).join('')+
     (rows.length>300?'<tr><td colspan="6">…只顯示前 300 列，完整清單請匯出 CSV</td></tr>':'');
+  bindSort($('#t-fix'), 'fix', fix);
 }
 $('#fx').onchange=fix; $('#fd').oninput=fix;
-$('#fcsv').onclick=()=>download(
-  `待修正清單_${new Date().toISOString().slice(0,10)}.csv`,
-  toCSV(fixRows(), ['機關','問題','說明','標題','發布日期','下版日期','最後檢視','網址']));
+const FIX_COLS=['機關','問題','說明','標題','發布日期','下版日期','最後檢視','網址'];
+$('#fcsv').onclick=e=>toExcel('待修正清單', FIX_COLS,
+  fixRows().map(f=>FIX_COLS.map(c=>f[c])), e.target);
+
+
+// ---- 匯出 ------------------------------------------------------------------
+// 一律以 Excel 為主。瀏覽器自己做不出真正的 xlsx（要額外函式庫），所以把
+// 目前篩出來的列送給本機工作台用 openpyxl 寫檔，再給一個下載連結。
+// 在 GitHub Pages 上沒有工作台，就退回 CSV（UTF-8 BOM，Excel 開不會亂碼）。
+let LOCAL_OK = false;      // local() 連上工作台後會設成 true
+async function toExcel(name, cols, rows, btn){
+  const old = btn ? btn.textContent : '';
+  if(btn){ btn.disabled = true; btn.textContent = '產生中…'; }
+  try{
+    if(!LOCAL_OK) throw new Error('沒有本機工作台');
+    const r = await fetch(api('xlsx'), {method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({name, sheet: name, cols, rows})});
+    const j = await r.json();
+    if(!j.ok) throw new Error(j.msg || '產生失敗');
+    location.href = api('download?name=' + encodeURIComponent(j.file));
+    if(btn){ btn.textContent = '已產生 ✓'; setTimeout(()=>btn.textContent=old, 2500); }
+  }catch(e){
+    // 沒有工作台就退回 CSV，至少不會讓人按了沒反應
+    download(name + '_' + new Date().toISOString().slice(0,10) + '.csv',
+      toCSV(rows.map(r=>Object.fromEntries(cols.map((c,i)=>[c, r[i]]))), cols));
+    if(btn) btn.textContent = old;
+  }finally{
+    if(btn) btn.disabled = false;
+  }
+}
+
+// ---- 表格排序 --------------------------------------------------------------
+// 點欄位標題排序。排的是「整份資料」不是畫面上那幾列 —— 表格只顯示前 300 筆，
+// 只排畫面上的會排出假結果（例如照下版日期排，看到的不是真正最早的那幾筆）。
+const SORT = {};                      // 每張表各自記住排到第幾欄、升冪還降冪
+
+function applySort(id, arr, acc){
+  const st = SORT[id];
+  if(!st || !acc[st.i]) return arr;
+  const get = acc[st.i], dir = st.dir;
+  const empty = v => v === '' || v === null || v === undefined;
+  return [...arr].sort((a, b) => {
+    const x = get(a), y = get(b);
+    // 沒填的一律墊底，不管升冪降冪 —— 不然按「下版日期」升冪，
+    // 最上面全是沒設下版日期的空白列，等於看不到最早到期的那幾筆
+    if(empty(x) !== empty(y)) return empty(x) ? 1 : -1;
+    if(typeof x === 'number' && typeof y === 'number') return (x - y) * dir;
+    return String(x ?? '').localeCompare(String(y ?? ''), 'zh-Hant') * dir;
+  });
+}
+
+function bindSort(table, id, rerender){
+  const ths = table.querySelectorAll('thead th, tr:first-child th');
+  ths.forEach((th, i) => {
+    if(th.dataset.bound) return;
+    th.dataset.bound = '1';
+    th.style.cursor = 'pointer';
+    th.title = '點一下排序';
+    th.onclick = () => {
+      const st = SORT[id];
+      SORT[id] = (st && st.i === i) ? {i, dir: -st.dir} : {i, dir: 1};
+      rerender();
+    };
+  });
+  const st = SORT[id];
+  ths.forEach((th, i) => {
+    th.querySelectorAll('.arrow').forEach(e => e.remove());
+    if(st && st.i === i)
+      th.insertAdjacentHTML('beforeend',
+        `<span class="arrow"> ${st.dir > 0 ? '▲' : '▼'}</span>`);
+  });
+}
 
 // ---- 歷次測試 --------------------------------------------------------------
 // 單位切換與原本的工作台一樣：10 KB 以下用 B，1 MB 以下用 KB
@@ -767,10 +844,24 @@ const secs = s => s<90 ? s.toFixed(1)+' s'
 const NA='<span style="color:#c3c8ce">–</span>';
 
 function runsTable(){
-  const {head,rows}=RUNS;
+  const {head,rows:raw0}=RUNS;
   const tb=$('#rt');
   const g=(r,c)=>{const i=head.indexOf(c); return i<0?'':(r[i]??'');};
   const n=(r,c)=>parseFloat(g(r,c))||0;
+  // 這張表的欄位是算出來的（每筆幾 byte、有效率…），不是 CSV 欄位本身，
+  // 所以排序要照「畫面上顯示的那個值」排，不能照原始欄位排。
+  const cnt=r=>Math.max(n(r,'處理筆數')||n(r,'已下載'),1);
+  const RUN_ACC=[
+    r=>g(r,'時間'), r=>g(r,'抓法')||g(r,'模式'), r=>n(r,'限速ms'),
+    r=>g(r,'範圍'), r=>cnt(r), r=>n(r,'耗時秒'), r=>n(r,'每筆毫秒'),
+    r=>n(r,'等伺服器ms'), r=>n(r,'傳輸ms'),
+    r=>n(r,'抓下MB')*1048576/cnt(r), r=>n(r,'原始MB')*1048576/cnt(r),
+    r=>n(r,'原始MB')?n(r,'抓下MB')/n(r,'原始MB'):0,
+    r=>n(r,'需要KB')*1024/cnt(r),
+    r=>n(r,'抓下MB')?n(r,'需要KB')/1024/n(r,'抓下MB'):0,
+    r=>g(r,'備註'),
+  ];
+  const rows=applySort('runs', raw0, RUN_ACC);
   tb.innerHTML=rows.slice(0,80).map(r=>{
     const d=Math.max(n(r,'處理筆數')||n(r,'已下載'),1);
     const wire=n(r,'抓下MB')*1048576, raw=n(r,'原始MB')*1048576;
@@ -802,17 +893,19 @@ function runsTable(){
       <td>${g(r,'備註')?'<span style="color:var(--danger)">中斷</span>':''}</td>
     </tr>`;}).join('')
     ||'<tr><td colspan="15" style="color:#9aa2ac">還沒有紀錄</td></tr>';
+  bindSort($('#rt').closest('table'), 'runs', runsTable);
 }
-$('#runcsv').onclick=()=>download(
-  `執行紀錄_${new Date().toISOString().slice(0,10)}.csv`,
-  '﻿' + [RUNS.head.join(',')].concat(
-    RUNS.rows.map(r=>r.map(v=>'"'+String(v??'').replace(/"/g,'""')+'"').join(','))
-  ).join('\r\n'));
+$('#runcsv').onclick=e=>toExcel('執行紀錄', RUNS.head,
+  RUNS.rows.map(r=>r.map(v=>{const n=parseFloat(v);
+    return (v!=='' && !isNaN(n) && String(n)===String(v).trim()) ? n : v;})),
+  e.target);
 
 // ---- 異動紀錄 --------------------------------------------------------------
+const CHG_ACC=[r=>r['時間'], r=>r['動作'], r=>r['變動欄位'],
+               r=>r['發布日期'], r=>r['機關'], r=>r['標題']];
 function changes(){
   const f=$('#cf2').value;
-  const rows=CHG.filter(r=>!f||r['動作']===f);
+  const rows=applySort('chg', CHG.filter(r=>!f||r['動作']===f), CHG_ACC);
   $('#c-count').textContent=`共 ${nf(rows.length)} 筆，顯示最近 300 筆`;
   if(!rows.length){ $('#t-chg').innerHTML='<tr><td>還沒有異動紀錄</td></tr>'; return; }
   $('#t-chg').innerHTML=
@@ -825,6 +918,7 @@ function changes(){
       <td>${esc(r['機關'])}</td>
       <td class="t"><a href="${esc(r['網址'])}" target="_blank"
         rel="noopener">${esc(r['標題'])}</a></td></tr>`).join('');
+  bindSort($('#t-chg'), 'chg', changes);
 }
 $('#cf2').onchange=changes;
 
@@ -847,8 +941,12 @@ function dataRows(){
 }
 const med=a=>{const s=[...a].sort((x,y)=>x-y);return s.length?s[s.length>>1]:0;};
 
+const DATA_ACC=[r=>(r.published||'').slice(0,10), r=>r.updated||'',
+                r=>r.reviewed||'', r=>r.expire||'', r=>r.title||'',
+                r=>r.dept||'', r=>r.bytes_wire||0, r=>r.bytes_raw||0,
+                r=>r.bytes_needed||0, r=>r.answer||''];
 function dataTable(){
-  DROWS=dataRows();
+  DROWS=applySort('data', dataRows(), DATA_ACC);
   $('#cnt').textContent=`符合 ${nf(DROWS.length)} 筆`;
   const nd=DROWS.map(r=>r.bytes_needed).filter(Boolean);
   const wr=DROWS.map(r=>r.bytes_wire).filter(Boolean);
@@ -878,6 +976,7 @@ function dataTable(){
   if(DROWS.length>300)
     $('#tb').innerHTML+='<tr><td colspan="10" style="color:#9aa2ac">'+
       `…只顯示前 300 筆，其餘請匯出（共 ${nf(DROWS.length)} 筆）</td></tr>`;
+  bindSort($('#tb').closest('table'), 'data', dataTable);
 }
 $('#fil').onclick=dataTable;
 $('#clr').onclick=()=>{$('#d1').value=$('#d2').value=$('#dq').value='';dataTable();};
@@ -939,6 +1038,7 @@ async function local(){
     }catch(e){ /* 這個來源沒有工作台，換下一個 */ }
   }
   if(!info) return;                              // 沒有工作台，就只當唯讀頁
+  LOCAL_OK = true;
   $('#panel').hidden=false; $('#toolcard').hidden=false;
   $('#xls').hidden=false;
   $('#xls').onclick=async()=>{
