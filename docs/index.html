@@ -39,11 +39,13 @@ h1{margin:0;font-size:16px;color:#fff}
   .side button{width:auto}
   .sidenote{width:100%}
 }
-header .meta{color:var(--dim);font-size:12.5px;font-variant-numeric:tabular-nums}
-header .meta b{color:var(--ink);font-weight:600}
-header .meta .ok{color:var(--deep);font-weight:600}
-header .meta .bad{color:var(--danger);font-weight:600}
-header .meta i{font-style:normal;color:var(--line);margin:0 5px}
+/* 頂條是深藍底，這行狀態要用亮色 —— 原本沿用內文的灰色，放上去等於看不見 */
+.topbar .meta{color:rgba(255,255,255,.85);font-size:12.5px;
+              font-variant-numeric:tabular-nums;line-height:1.7}
+.topbar .meta b{color:#fff;font-weight:700}
+.topbar .meta .ok{color:#8ef0d0;font-weight:700}
+.topbar .meta .bad{color:#ffc9c2;font-weight:700}
+.topbar .meta i{font-style:normal;color:rgba(255,255,255,.35);margin:0 6px}
 main{display:grid;gap:16px;grid-template-columns:minmax(0,1fr);min-width:0}
 section[data-page]{display:grid;gap:16px}
 .card{background:var(--card);border:1px solid var(--line);border-radius:10px;
@@ -147,8 +149,10 @@ mark{background:#ffe9a8;border-radius:2px}
     <span class="meta" id="ov">載入中…</span>
   </div>
   <div class="links">
-    <a id="repolink" href="#" target="_blank" rel="noopener">GitHub 倉庫 ↗</a>
-    <a id="runlink" href="#" target="_blank" rel="noopener">Actions 執行 ↗</a>
+    <a id="repolink" href="#" target="_blank" rel="noopener"
+       title="程式碼與資料的雲端備份，兩台電腦靠它同步">GitHub 倉庫 ↗</a>
+    <a id="runlink" href="#" target="_blank" rel="noopener"
+       title="在 GitHub 的機器上跑爬蟲（不占用你的電腦和你的 IP）">雲端抓取 ↗</a>
   </div>
 </header>
 
