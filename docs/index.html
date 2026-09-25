@@ -8,20 +8,43 @@
 /* 版面與配色沿用原本 app.py 那個工作台，只是資料來源換成 docs/ 的檔案 */
 :root{color-scheme:light;
       --bg:#f5f6f8;--card:#fff;--line:#e4e7eb;--ink:#1a1e24;--dim:#6b7280;
-      --accent:#0cb5b5;--deep:#0a7f7f;--danger:#c0392b;--warn:#a8541c}
+      --accent:#0cb5b5;--deep:#0a7f7f;--danger:#c0392b;--warn:#a8541c;
+      --navy:#1d6fd6}
 *{box-sizing:border-box}
 body{margin:0;font:14px/1.6 -apple-system,"PingFang TC","Microsoft JhengHei",
      "Noto Sans TC",sans-serif;background:var(--bg);color:var(--ink)}
-header{background:var(--card);border-bottom:1px solid var(--line);padding:13px 22px;
-       display:flex;align-items:baseline;gap:14px;flex-wrap:wrap}
-h1{margin:0;font-size:16px}
+/* 頂條：深藍，左邊標題＋一行式狀態，右邊去 GitHub */
+.topbar{background:var(--navy);color:#fff;padding:12px 22px;display:flex;
+        align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap}
+.topbar .tt{display:flex;align-items:baseline;gap:14px;flex-wrap:wrap;min-width:0}
+.topbar a{color:#cfe3ff;text-decoration:none;font-size:13px;white-space:nowrap}
+.topbar a:hover{color:#fff;text-decoration:underline}
+h1{margin:0;font-size:16px;color:#fff}
+
+/* 左側分區 */
+.layout{max-width:1240px;margin:16px auto;padding:0 16px;display:grid;
+        grid-template-columns:190px minmax(0,1fr);gap:16px;align-items:start}
+.side{background:var(--card);border:1px solid var(--line);border-radius:10px;
+      padding:8px;position:sticky;top:16px}
+.side button{display:block;width:100%;text-align:left;background:none;
+      border:0;border-radius:8px;padding:9px 12px;margin:0;font:inherit;
+      font-size:13.5px;font-weight:400;color:var(--ink);cursor:pointer}
+.side button:hover{background:#eef2f7;filter:none}
+.side button.on{background:var(--navy);color:#fff;font-weight:600}
+.sidenote{font-size:12px;color:var(--dim);padding:10px 12px 4px;line-height:1.6}
+@media (max-width:820px){
+  .layout{grid-template-columns:minmax(0,1fr)}
+  .side{position:static;display:flex;flex-wrap:wrap;gap:4px}
+  .side button{width:auto}
+  .sidenote{width:100%}
+}
 header .meta{color:var(--dim);font-size:12.5px;font-variant-numeric:tabular-nums}
 header .meta b{color:var(--ink);font-weight:600}
 header .meta .ok{color:var(--deep);font-weight:600}
 header .meta .bad{color:var(--danger);font-weight:600}
 header .meta i{font-style:normal;color:var(--line);margin:0 5px}
-main{max-width:1200px;margin:18px auto;padding:0 16px;display:grid;gap:16px;
-     grid-template-columns:minmax(0,1fr)}
+main{display:grid;gap:16px;grid-template-columns:minmax(0,1fr);min-width:0}
+section[data-page]{display:grid;gap:16px}
 .card{background:var(--card);border:1px solid var(--line);border-radius:10px;
       padding:16px;min-width:0}
 .card h2{margin:0 0 13px;font-size:13px;color:var(--dim);font-weight:600;
@@ -110,13 +133,28 @@ mark{background:#ffe9a8;border-radius:2px}
 </head>
 <body>
 
-<header>
-  <h1>臺北市政府常見問答 · 爬蟲工作台</h1>
-  <span class="meta" id="ov">載入中…</span>
+<header class="topbar">
+  <div class="tt">
+    <h1>臺北市政府常見問答 · 爬蟲工作台</h1>
+    <span class="meta" id="ov">載入中…</span>
+  </div>
+  <a id="runlink" href="#" target="_blank" rel="noopener">在 GitHub 執行 ↗</a>
 </header>
 
-<main>
+<div class="layout">
+<aside class="side">
+  <button data-page="crawl" class="on">🕷　爬蟲工具</button>
+  <button data-page="faq">🔍　問答查詢</button>
+  <button data-page="data">📋　資料清單</button>
+  <button data-page="stat">📊　資料概況</button>
+  <button data-page="fix">🛠　維護建議</button>
+  <button data-page="runs">⏱　執行紀錄</button>
+  <button data-page="chg">🔄　異動紀錄</button>
+  <div class="sidenote" id="loading">載入資料中…</div>
+</aside>
 
+<main>
+<section data-page="crawl">
 <!-- ===== 抓取（只有本機工作台才會出現）===== -->
 <div class="card" id="panel" hidden>
   <h2>抓取</h2>
@@ -172,6 +210,115 @@ mark{background:#ffe9a8;border-radius:2px}
   <div class="hint">產生的 <code>report.md</code> 和 Excel 會放在專案資料夾裡。</div>
 </div>
 
+</section>
+
+<section data-page="faq" hidden>
+<div class="card">
+  <section id="tab-faq">
+    <div class="row" style="align-items:center;margin-bottom:12px">
+      <input id="q" type="search" placeholder="關鍵字（標題與內容）"
+             style="flex:1;min-width:220px">
+      <select id="dept"><option value="">全部機關</option></select>
+      <select id="year"><option value="">全部年份</option></select>
+      <select id="sort">
+        <option value="date-">發布日期新→舊</option>
+        <option value="date+">發布日期舊→新</option>
+        <option value="exp+">下版日期近→遠</option>
+        <option value="title">標題</option>
+      </select>
+      <label style="margin:0"><input type="checkbox" id="onlyfile"> 只看有附件</label>
+      <label style="margin:0"><input type="checkbox" id="showgone"> 含已下架</label>
+      <button class="ghost" id="csv">匯出 CSV</button>
+    </div>
+    <div class="hint" id="count" style="margin:0 0 10px"></div>
+    <div id="list"></div>
+    <div style="text-align:center">
+      <button class="ghost" id="more" hidden>再顯示 200 筆</button>
+    </div>
+  </section>
+</div>
+</section>
+
+<section data-page="data" hidden>
+<!-- ===== 資料 · 篩選與匯出（一筆一列，每個欄位都列出來）===== -->
+<div class="card">
+  <h2>資料 · 篩選與匯出</h2>
+  <div class="row">
+    <div><label>發布時間 從</label><input id="d1" type="date"></div>
+    <div><label>到</label><input id="d2" type="date"></div>
+    <div><label>關鍵字（標題／內容／機關）</label>
+         <input id="dq" type="search" style="width:220px"></div>
+    <button class="ghost" id="fil">篩選</button>
+    <button class="ghost" id="clr">清除</button>
+    <span style="flex:1"></span>
+    <button class="ghost" id="xls" hidden>匯出 Excel</button>
+    <span class="hint" id="xlsmsg" style="margin:0;align-self:center"></span>
+  </div>
+  <div class="hint"><span class="badge" id="cnt">–</span>
+    <span id="bytesum"></span></div>
+  <div class="wrap" style="margin-top:10px">
+    <table><thead><tr>
+      <th>發布時間</th><th>更新時間</th><th>檢視時間</th><th>下版日期</th>
+      <th>標題</th><th>發布機關</th>
+      <th class="num sep">抓下<br>
+        <span style="font-weight:400;color:#9aa2ac">byte・gzip後</span></th>
+      <th class="num">原始<br>
+        <span style="font-weight:400;color:#9aa2ac">byte・解壓後</span></th>
+      <th class="num">需要<br>
+        <span style="font-weight:400;color:#9aa2ac">byte・那幾個欄位</span></th>
+      <th>內容</th>
+    </tr></thead><tbody id="tb"></tbody></table>
+  </div>
+  <div class="hint">
+    「抓下」是這一筆真正流過網路的位元組（gzip 壓縮後的整頁 HTML），
+    「需要」是這幾個欄位加起來的 UTF-8 位元組。兩者相差約 100 倍 ——
+    那 54 KB 的版型骨架跟內容一個字都沒關係。
+三個數字都跟著每一筆資料存，本機和 GitHub 上看到的一樣。
+  </div>
+</div>
+
+</section>
+
+<section data-page="stat" hidden>
+<div class="card">
+  <section id="tab-stat">
+    <div class="grid">
+      <div class="box"><h4>發布機關（前 15 名）</h4><div class="bars" id="s-dept"></div></div>
+      <div class="box"><h4>發布年份</h4><div class="bars" id="s-year"></div></div>
+      <div class="box"><h4>下版日期維護</h4><div class="bars" id="s-exp"></div>
+        <div class="hint">點數字會跳到問答查詢並套用條件。</div></div>
+      <div class="box"><h4>內容長度</h4><div class="bars" id="s-len"></div></div>
+    </div>
+  </section>
+</div>
+</section>
+
+<section data-page="fix" hidden>
+<div class="card">
+  <section id="tab-fix">
+    <div class="row" style="align-items:center;margin-bottom:12px">
+      <select id="fx"><option value="">全部問題類型</option></select>
+      <select id="fd"><option value="">全部機關</option></select>
+      <button class="ghost" id="fcsv">匯出待修正清單 CSV</button>
+      <span class="hint" id="f-count" style="margin:0"></span>
+    </div>
+    <div class="grid" style="margin-bottom:14px">
+      <div class="box"><h4>問題類型</h4><div class="bars" id="f-kind"></div></div>
+      <div class="box"><h4>待修正最多的機關（前 15 名）</h4>
+        <div class="bars" id="f-dept"></div></div>
+    </div>
+    <div class="wrap"><table id="t-fix"></table></div>
+    <div class="hint">
+      這一頁是拿來發給各局處的。<b>已過期還掛著</b>是下版日期已經過了但問答還在站上；
+      <b>沒設下版日期</b>表示不會自動下架，需要人工盯；<b>一年以上沒檢視</b>只看站上的
+      「資料檢視」欄位，沒有值就不算（不會拿發布或更新時間頂替）；<b>沒有內容</b>是內文空白且沒有附件；<b>標題重複</b>是同一個標題
+      在站上出現一次以上。匯出的 CSV 一列一個問題，可以直接按機關拆給承辦。
+    </div>
+  </section>
+</div>
+</section>
+
+<section data-page="runs" hidden>
 <!-- ===== GitHub 上的執行狀況 ===== -->
 <div class="card">
   <h2>GitHub Actions　<span>排程與手動執行都在雲端跑，這裡看得到結果</span></h2>
@@ -215,108 +362,11 @@ mark{background:#ffe9a8;border-radius:2px}
   </div>
 </div>
 
-<!-- ===== 資料 · 篩選與匯出（一筆一列，每個欄位都列出來）===== -->
+</section>
+
+<section data-page="chg" hidden>
 <div class="card">
-  <h2>資料 · 篩選與匯出</h2>
-  <div class="row">
-    <div><label>發布時間 從</label><input id="d1" type="date"></div>
-    <div><label>到</label><input id="d2" type="date"></div>
-    <div><label>關鍵字（標題／內容／機關）</label>
-         <input id="dq" type="search" style="width:220px"></div>
-    <button class="ghost" id="fil">篩選</button>
-    <button class="ghost" id="clr">清除</button>
-    <span style="flex:1"></span>
-    <button class="ghost" id="xls" hidden>匯出 Excel</button>
-    <span class="hint" id="xlsmsg" style="margin:0;align-self:center"></span>
-  </div>
-  <div class="hint"><span class="badge" id="cnt">–</span>
-    <span id="bytesum"></span></div>
-  <div class="wrap" style="margin-top:10px">
-    <table><thead><tr>
-      <th>發布時間</th><th>更新時間</th><th>檢視時間</th><th>下版日期</th>
-      <th>標題</th><th>發布機關</th>
-      <th class="num sep">抓下<br>
-        <span style="font-weight:400;color:#9aa2ac">byte・gzip後</span></th>
-      <th class="num">原始<br>
-        <span style="font-weight:400;color:#9aa2ac">byte・解壓後</span></th>
-      <th class="num">需要<br>
-        <span style="font-weight:400;color:#9aa2ac">byte・那幾個欄位</span></th>
-      <th>內容</th>
-    </tr></thead><tbody id="tb"></tbody></table>
-  </div>
-  <div class="hint">
-    「抓下」是這一筆真正流過網路的位元組（gzip 壓縮後的整頁 HTML），
-    「需要」是這幾個欄位加起來的 UTF-8 位元組。兩者相差約 100 倍 ——
-    那 54 KB 的版型骨架跟內容一個字都沒關係。
-三個數字都跟著每一筆資料存，本機和 GitHub 上看到的一樣。
-  </div>
-</div>
-
-<!-- ===== 資料 ===== -->
-<div class="card">
-  <nav>
-    <button data-tab="faq" aria-selected="true">問答查詢</button>
-    <button data-tab="stat" aria-selected="false">資料概況</button>
-    <button data-tab="fix" aria-selected="false">維護建議</button>
-    <button data-tab="chg" aria-selected="false">異動紀錄</button>
-  </nav>
-  <div id="loading">載入資料中…</div>
-
-  <section id="tab-faq" hidden>
-    <div class="row" style="align-items:center;margin-bottom:12px">
-      <input id="q" type="search" placeholder="關鍵字（標題與內容）"
-             style="flex:1;min-width:220px">
-      <select id="dept"><option value="">全部機關</option></select>
-      <select id="year"><option value="">全部年份</option></select>
-      <select id="sort">
-        <option value="date-">發布日期新→舊</option>
-        <option value="date+">發布日期舊→新</option>
-        <option value="exp+">下版日期近→遠</option>
-        <option value="title">標題</option>
-      </select>
-      <label style="margin:0"><input type="checkbox" id="onlyfile"> 只看有附件</label>
-      <label style="margin:0"><input type="checkbox" id="showgone"> 含已下架</label>
-      <button class="ghost" id="csv">匯出 CSV</button>
-    </div>
-    <div class="hint" id="count" style="margin:0 0 10px"></div>
-    <div id="list"></div>
-    <div style="text-align:center">
-      <button class="ghost" id="more" hidden>再顯示 200 筆</button>
-    </div>
-  </section>
-
-  <section id="tab-stat" hidden>
-    <div class="grid">
-      <div class="box"><h4>發布機關（前 15 名）</h4><div class="bars" id="s-dept"></div></div>
-      <div class="box"><h4>發布年份</h4><div class="bars" id="s-year"></div></div>
-      <div class="box"><h4>下版日期維護</h4><div class="bars" id="s-exp"></div>
-        <div class="hint">點數字會跳到問答查詢並套用條件。</div></div>
-      <div class="box"><h4>內容長度</h4><div class="bars" id="s-len"></div></div>
-    </div>
-  </section>
-
-  <section id="tab-fix" hidden>
-    <div class="row" style="align-items:center;margin-bottom:12px">
-      <select id="fx"><option value="">全部問題類型</option></select>
-      <select id="fd"><option value="">全部機關</option></select>
-      <button class="ghost" id="fcsv">匯出待修正清單 CSV</button>
-      <span class="hint" id="f-count" style="margin:0"></span>
-    </div>
-    <div class="grid" style="margin-bottom:14px">
-      <div class="box"><h4>問題類型</h4><div class="bars" id="f-kind"></div></div>
-      <div class="box"><h4>待修正最多的機關（前 15 名）</h4>
-        <div class="bars" id="f-dept"></div></div>
-    </div>
-    <div class="wrap"><table id="t-fix"></table></div>
-    <div class="hint">
-      這一頁是拿來發給各局處的。<b>已過期還掛著</b>是下版日期已經過了但問答還在站上；
-      <b>沒設下版日期</b>表示不會自動下架，需要人工盯；<b>一年以上沒檢視</b>只看站上的
-      「資料檢視」欄位，沒有值就不算（不會拿發布或更新時間頂替）；<b>沒有內容</b>是內文空白且沒有附件；<b>標題重複</b>是同一個標題
-      在站上出現一次以上。匯出的 CSV 一列一個問題，可以直接按機關拆給承辦。
-    </div>
-  </section>
-
-  <section id="tab-chg" hidden>
+  <section id="tab-chg">
     <div class="row" style="align-items:center;margin-bottom:12px">
       <select id="cf2">
         <option value="">全部動作</option><option>新增</option>
@@ -331,8 +381,11 @@ mark{background:#ffe9a8;border-radius:2px}
     </div>
   </section>
 </div>
+</section>
 
 </main>
+</div>
+
 
 <script>
 // ---- 小工具 ----------------------------------------------------------------
@@ -449,7 +502,6 @@ function init(){
     years.map(y=>`<option>${esc(y)}</option>`).join('');
   render(true); stats(); buildFix(); runsTable(); changes(); dataTable();
   gha(); local();
-  $('#tab-faq').hidden=false;
 }
 
 // ---- 標題那一行 ------------------------------------------------------------
@@ -468,18 +520,21 @@ function overview(){
     (ds.length?`　發布時間 ${ds[0]} ~ ${ds[ds.length-1]}`:'')+
     (META.last_run?`<i>|</i>上次抓取 ${META.last_run}`
       +`（${META.last_mode||''}，${META.last_where||''}`
-      +`${META.last_elapsed?'，'+META.last_elapsed+'s':''}）`:'')+
-    `　<a href="https://github.com/${repoSlug()}/actions/workflows/crawl.yml"
-        target="_blank" rel="noopener">在 GitHub 執行 ↗</a>`;
+      +`${META.last_elapsed?'，'+META.last_elapsed+'s':''}）`:'');
+  // 去 GitHub 的連結固定在頂條右邊，狀態列不要再放一個
 }
 
 // ---- 分頁 ------------------------------------------------------------------
-document.querySelectorAll('nav button').forEach(b=>b.onclick=()=>{
-  document.querySelectorAll('nav button').forEach(x=>
-    x.setAttribute('aria-selected', x===b));
-  ['faq','stat','fix','chg'].forEach(t=>
-    $('#tab-'+t).hidden = t!==b.dataset.tab);
-});
+// 左側欄切換分區
+function goPage(key){
+  document.querySelectorAll('.side button').forEach(b=>
+    b.classList.toggle('on', b.dataset.page===key));
+  document.querySelectorAll('section[data-page]').forEach(sec=>
+    sec.hidden = sec.dataset.page!==key);
+  scrollTo({top:0,behavior:'smooth'});
+}
+document.querySelectorAll('.side button').forEach(b=>
+  b.onclick=()=>goPage(b.dataset.page));
 
 // ---- 問答查詢 --------------------------------------------------------------
 let LIST=[];
@@ -579,10 +634,7 @@ $('#csv').onclick=()=>download(
      'maintainer','answer','files','url','kind','gone']));
 
 // ---- 資料概況 --------------------------------------------------------------
-function goFaq(){
-  document.querySelector('nav button[data-tab=faq]').click();
-  render(true); scrollTo({top:0,behavior:'smooth'});
-}
+function goFaq(){ goPage('faq'); render(true); }
 function stats(){
   const live=ALL.filter(r=>!r.gone);
   const by=f=>{const m=new Map();live.forEach(r=>{const k=f(r);
