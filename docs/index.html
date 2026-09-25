@@ -32,14 +32,15 @@ h1{margin:0;font-size:16px;color:#fff}
       padding:9px 12px;margin:0;font:inherit;font-size:13.5px;
       font-weight:400;color:var(--ink);cursor:pointer}
 .side button i{font-style:normal;width:18px;text-align:center;flex:0 0 auto}
-.side button.fold{justify-content:center;color:var(--dim);font-size:15px;
-      padding:4px;margin-bottom:4px}
+/* 收合鈕固定在左上角，展開和收合時都在同一個位置（padding 一致） */
+.side button.fold{justify-content:flex-start;color:var(--dim);font-size:16px;
+      padding:2px 12px 6px;margin-bottom:2px;line-height:1}
 .side button.fold:hover{background:#eef2f7}
 
 /* 收合：只剩圖示，內容區變寬 */
 .layout.fold{grid-template-columns:52px minmax(0,1fr)}
 .layout.fold .side button span{display:none}
-.layout.fold .side button{justify-content:center;padding:9px 4px}
+.layout.fold .side button[data-page]{justify-content:center;padding:9px 4px}
 .layout.fold .sidenote{display:none}
 
 /* 問答查詢：左邊局處分類，右邊結果 */
@@ -579,9 +580,10 @@ function overview(){
     `　已下架保留 ${nf(ALL.length-live.length)} 筆`+
     `<i>|</i>資料庫 ${nf(ALL.length)} 筆，其中 ${nf(body)} 筆有內文`+
     (ds.length?`　發布時間 ${ds[0]} ~ ${ds[ds.length-1]}`:'')+
-    (META.last_run?`<i>|</i>上次抓取 ${META.last_run}`
-      +`（${META.last_mode||''}，${META.last_where||''}`
-      +`${META.last_elapsed?'，'+META.last_elapsed+'s':''}）`:'');
+    // 模式、來源、耗時放滑鼠提示就好，擺在標題列會多吃掉一整行
+    (META.last_run?`<i>|</i><span title="${esc([META.last_mode,
+        META.last_where, META.last_elapsed?META.last_elapsed+' 秒':'']
+        .filter(Boolean).join('、'))}">上次抓取 ${META.last_run}</span>`:'');
   // 去 GitHub 的連結固定在頂條右邊，狀態列不要再放一個
 }
 
