@@ -419,7 +419,8 @@ tr.cmp-row td{background:#fafbfc;padding:10px 12px}
   <h2>歷次測試　<span>同樣筆數換不同抓法跑，這裡會累積成比較表</span></h2>
   <div class="wrap" style="max-height:300px">
     <table><thead><tr>
-      <th>時間</th><th>抓法</th><th class="num">限速</th><th>範圍</th>
+      <th>開始<br>
+        <span style="font-weight:400;color:#9aa2ac">結束</span></th><th>抓法</th><th class="num">限速</th><th>範圍</th>
       <th class="num">筆數</th><th class="num">耗時</th><th class="num">每筆</th>
       <th class="num sep">等伺服器</th><th class="num">傳輸</th>
       <th class="num sep">抓下/筆<br>
@@ -1083,8 +1084,24 @@ function runsTable(){
   // 這張表的欄位是算出來的（每筆幾 byte、有效率…），不是 CSV 欄位本身，
   // 所以排序要照「畫面上顯示的那個值」排，不能照原始欄位排。
   const cnt=r=>Math.max(n(r,'處理筆數')||n(r,'已下載'),1);
+  // 「時間」欄一直是結束（或中斷）的時間。後來才另外記開始、結束到秒；
+  // 更早的列沒有開始時間，用「時間 − 耗時」推回去，標「約」。
+  const pad=x=>String(x).padStart(2,'0');
+  const span=r=>{
+    let s=g(r,'開始時間'), e=g(r,'結束時間')||g(r,'時間'), est=false;
+    if(!s && e){
+      const t=new Date(e.replace(' ','T'));
+      if(!isNaN(t)){
+        t.setSeconds(t.getSeconds()-Math.round(n(r,'耗時秒')));
+        s=`${t.getFullYear()}-${pad(t.getMonth()+1)}-${pad(t.getDate())} `
+          +`${pad(t.getHours())}:${pad(t.getMinutes())}`;
+        est=true;
+      }
+    }
+    return {s, e, est};
+  };
   const RUN_ACC=[
-    r=>g(r,'時間'), r=>g(r,'抓法')||g(r,'模式'), r=>n(r,'限速ms'),
+    r=>span(r).s, r=>g(r,'抓法')||g(r,'模式'), r=>n(r,'限速ms'),
     r=>g(r,'範圍'), r=>cnt(r), r=>n(r,'耗時秒'), r=>n(r,'每筆毫秒'),
     r=>n(r,'等伺服器ms'), r=>n(r,'傳輸ms'),
     r=>n(r,'抓下MB')*1048576/cnt(r), r=>n(r,'原始MB')*1048576/cnt(r),
@@ -1102,8 +1119,12 @@ function runsTable(){
     // 看起來會跟有 gzip 的一樣）
     const eff=wire?100*kept/wire:0;
     const lo=g(r,'需要最小B'), hi=g(r,'需要最大B');
+    const t=span(r);
+    // 結束跟開始同一天就只寫時刻，不然一整串日期擠在一格裡
+    const e=t.e.slice(0,10)===t.s.slice(0,10)?t.e.slice(11):t.e;
     return `<tr>
-      <td>${esc(g(r,'時間'))}</td>
+      <td>${t.est?'<span style="color:#9aa2ac">約</span> ':''}${esc(t.s)}
+        <br><span style="color:#9aa2ac;font-size:11px">→ ${esc(e)}</span></td>
       <td>${esc(g(r,'抓法')||g(r,'模式'))}</td>
       <td class="num">${n(r,'限速ms')?n(r,'限速ms')+' ms'
         :'<span style="color:#c3c8ce">無</span>'}</td>
