@@ -119,7 +119,7 @@ def sheet(wb, title, header, rows, widths=None, freeze="A2", links=()):
 def read_csv(path):
     if not os.path.exists(path):
         return [], []
-    with open(path, encoding="utf-8", newline="") as f:
+    with open(path, encoding="utf-8-sig", newline="") as f:
         rows = list(csv.reader(f))
     return (rows[0], rows[1:]) if rows else ([], [])
 

@@ -220,7 +220,7 @@ def latest_wire():
         import csv
         import glob
         for p in sorted(glob.glob(os.path.join(HERE, "exports", "*.csv"))):
-            with open(p, encoding="utf-8", newline="") as f:
+            with open(p, encoding="utf-8-sig", newline="") as f:
                 for r in csv.DictReader(f):
                     if r.get("sid") and r.get("抓下bytes"):
                         out[r["sid"]] = int(float(r["抓下bytes"]))
