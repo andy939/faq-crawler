@@ -75,6 +75,12 @@ PROBE_RETRY_WAIT = 20    # 第一次探測偏高時，等幾秒再探一次才�
 # 所以硬跑不會弄壞資料 —— 程式沒有理由替你決定放棄。
 # 要自動停就用 --abort-after N。
 ABORT_AFTER_BLOCKS = 0
+# 官網整個掛掉跟「被擋」是兩回事：擋是站方還在、只是不給抓；掛是什麼都不回。
+# 2026-09-26 官網 19:54 掛掉，這裡照樣重試了 3 小時、6,268 次全失敗。
+# 所以：連續 1 分鐘都失敗，就「停 1 分鐘、試 1 分鐘」輪流，停的時候完全不送請求；
+# 連續 30 分鐘都失敗，就自動停止並告警。中間只要有一筆正常就回到平常的抓法。
+DOWN_WINDOW = 60         # 停、試各幾秒
+DOWN_GIVE_UP = 30 * 60   # 連續失敗多久就放棄
 MAX_GONE_CHECK = 60      # 不在清單裡的超過這個數，當作清單沒抓完整，不判下架
 TIMEOUT = 30
 MAX_RETRY = 3
@@ -147,6 +153,12 @@ def emit(**kv):
         sys.stdout.flush()
 
 
+def alert(msg):
+    """要人注意的事：工作台的紀錄框會看到這一行，另外送一個 alert 指標。"""
+    print(f"\n！！【告警 {time.strftime('%H:%M:%S')}】{msg}", flush=True)
+    emit(alert=msg)
+
+
 def stopped():
     return os.path.exists(STOP)
 
@@ -210,28 +222,32 @@ def save_meta(m):
         f.write("\n")
 
 
-def append_csv(path, cols, rows):
+def append_csv(path, cols, rows, bom=False):
     """附加到 CSV。欄位改過的話會自動把整個檔案搬成新格式 ——
     不然新列是照新欄位寫的、檔頭卻還是舊的，讀出來整個錯位，
-    而且不會報錯，只會看到一張對不起來的表。"""
+    而且不會報錯，只會看到一張對不起來的表。
+
+    bom=True 給要用 Excel 開的檔：中文 Windows 的 Excel 看不到 BOM
+    會當成 Big5，整份變亂碼。docs/ 底下的不加，網頁讀的時候第一欄會多個 BOM。"""
     if not rows:
         return
+    enc = "utf-8-sig" if bom else "utf-8"
     os.makedirs(os.path.dirname(path), exist_ok=True)
     old_rows, head = [], None
     if os.path.exists(path):
-        with open(path, encoding="utf-8", newline="") as f:
+        with open(path, encoding="utf-8-sig", newline="") as f:
             rd = csv.DictReader(f)
             head = rd.fieldnames
             if head != cols:
                 old_rows = list(rd)          # 舊列，等下用新欄位重寫一次
     if head is None or head == cols:
-        with open(path, "a", encoding="utf-8", newline="") as f:
+        with open(path, "a", encoding=enc, newline="") as f:
             w = csv.DictWriter(f, cols, extrasaction="ignore")
             if head is None:
                 w.writeheader()
             w.writerows(rows)
         return
-    with open(path, "w", encoding="utf-8", newline="") as f:
+    with open(path, "w", encoding=enc, newline="") as f:
         w = csv.DictWriter(f, cols, extrasaction="ignore")
         w.writeheader()
         for r in old_rows:
@@ -315,6 +331,46 @@ class Fetcher:
         self.t_wait = self.t_read = self.t_parse = 0.0
         self.blocked = self.errors = self.retries = self.streak = 0
         self.lat = []
+        self.down_since = None    # 最後一次拿到正常頁之後，第一次失敗的時間
+        self.down_phase = -1      # 目前在第幾個「試／停」區段，用來只告警一次
+
+    # -- 官網沒反應時的「停 1 分鐘、試 1 分鐘」--
+    def ok(self):
+        with self.lock:
+            since, self.down_since, self.down_phase = self.down_since, None, -1
+            self.streak = 0
+        if since is not None and time.perf_counter() - since >= DOWN_WINDOW:
+            alert(f"官網恢復回應（中斷約 {(time.perf_counter() - since) / 60:.0f} 分鐘），繼續抓")
+
+    def bad(self):
+        with self.lock:
+            if self.down_since is None:
+                self.down_since = time.perf_counter()
+
+    def gate(self):
+        """每次送請求前呼叫。官網沒反應的話，停的區段在這裡等，
+        累計太久就丟 Blocked 收尾。三條 thread 共用同一個時鐘，一起停一起試。"""
+        while True:
+            if stopped():
+                raise Blocked("使用者按了停止")
+            since = self.down_since
+            if since is None:
+                return
+            t = time.perf_counter() - since
+            if t >= DOWN_GIVE_UP:
+                raise Blocked(f"官網 {DOWN_GIVE_UP // 60} 分鐘沒有回應，自動停止")
+            phase = int(t // DOWN_WINDOW)
+            with self.lock:
+                first, self.down_phase = phase > self.down_phase, max(phase, self.down_phase)
+            left = (DOWN_GIVE_UP - t) / 60
+            if phase % 2 == 0:                     # 試的區段：照常送
+                if first and phase:
+                    alert(f"再試 {DOWN_WINDOW} 秒看官網回來沒（還剩約 {left:.0f} 分鐘就放棄）")
+                return
+            if first:
+                alert(f"官網 {t / 60:.0f} 分鐘沒有正常回應，先停 {DOWN_WINDOW} 秒"
+                      f"（還剩約 {left:.0f} 分鐘就放棄）")
+            time.sleep(1)
 
     # -- 連線 --
     def session(self):
@@ -337,8 +393,7 @@ class Fetcher:
         """回傳 (response, 等伺服器秒, 傳輸秒, 抓下bytes, 原始bytes)。"""
         last = None
         for attempt in range(MAX_RETRY):
-            if stopped():
-                raise Blocked("使用者按了停止")
+            self.gate()
             self.rate.wait()
             t0 = time.perf_counter()
             try:
@@ -348,6 +403,7 @@ class Fetcher:
                 t2 = time.perf_counter()
             except requests.RequestException as e:
                 last = e
+                self.bad()
                 with self.lock:
                     self.retries += 1
                 if attempt == MAX_RETRY - 1:
@@ -381,11 +437,12 @@ class Fetcher:
             # 被擋時站方回約 3 KB 的錯誤頁，HTTP 狀態碼仍然是 200。
             # 只看狀態碼會中招 —— 曾經把 5,947 筆好內容覆蓋成空的。
             if r.status_code == 200 and not (detail and F.is_blocked(r)):
-                with self.lock:
-                    self.streak = 0
+                self.ok()
                 return r.text
             if r.status_code == 404:
+                self.ok()                 # 404 也是官網有在回應
                 return None
+            self.bad()
             with self.lock:
                 self.blocked += 1
                 self.streak += 1
@@ -424,6 +481,7 @@ class Fetcher:
         except Exception as e:
             return failed(f"連線失敗：{type(e).__name__}")
         if F.is_blocked(r):
+            self.bad()
             with self.lock:
                 self.blocked += 1
                 self.streak += 1
@@ -434,8 +492,7 @@ class Fetcher:
             # 「第幾秒開始被擋、連續擋了幾筆、多久解除」
             return failed(f"錯誤頁 HTTP{r.status_code} {len(r.content)}B",
                           tw, tr, wire, raw)
-        with self.lock:
-            self.streak = 0
+        self.ok()
 
         tp = time.perf_counter()
         d = F.parse_detail(r.text)
@@ -1104,7 +1161,7 @@ def main():
             name = (f"{time.strftime('%Y%m%d_%H%M%S')}_方法{a.method}"
                     f"_{n_s}筆.csv")
             append_csv(os.path.join(EXPORTS, name), SAMPLE_COLS,
-                       sorted(samples, key=lambda s: s["seq"]))
+                       sorted(samples, key=lambda s: s["seq"]), bom=True)
             print(f"逐筆原始測量 → exports/{name}")
 
     if os.path.exists(STOP):
