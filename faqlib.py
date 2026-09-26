@@ -139,6 +139,10 @@ ESSAY_RE = re.compile(
 META_RE = re.compile(r"<span\s*>([一-鿿]{2,4})：(.*?)</span>", re.S)
 TITLE_RE = re.compile(r'<meta property="og:title" content="(.*?)"')
 TAG_RE = re.compile(r"<[^>]+>")
+# 承辦從 Word／別的網頁複製貼上時，會連 <style>、<script>、註解一起帶進來。
+# TAG_RE 只拿掉標籤本身，中間的 CSS／程式碼會原封不動留在答案開頭 ——
+# 所以去標籤前要先整段刪掉。
+NOISE_RE = re.compile(r"<(style|script)\b[^>]*>.*?</\1\s*>|<!--.*?-->", re.S | re.I)
 
 # 附件區塊：<div class="group-list file-download-multiple"> … 相關檔案
 FILEBLOCK_RE = re.compile(
@@ -154,7 +158,7 @@ FILEMETA_RE = re.compile(
 
 
 def clean_text(t):
-    t = _html.unescape(TAG_RE.sub("\n", t))
+    t = _html.unescape(TAG_RE.sub("\n", NOISE_RE.sub("", t)))
     t = re.sub(r"[ \t　]+", " ", t)
     return re.sub(r"\n\s*\n+", "\n", t).strip()
 
