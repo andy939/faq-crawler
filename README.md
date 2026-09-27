@@ -186,6 +186,7 @@ thread 歸屬，以及**錯誤頁與失敗也會留一列**（分析限流要用
 | `docs/changes.csv` | 逐筆異動紀錄 |
 | `docs/runs.csv` | 每次執行的彙總（耗時、每筆、壓縮率、有效率…） |
 | `docs/meta.json` | 現況摘要 |
+| `docs/conflicts.json` | 跨條文數字不一致、電話位數不對（`conflicts.py` 每次抓完自動重算） |
 | `exports/*.csv` | 逐筆原始測量 |
 
 每筆的欄位：
@@ -318,6 +319,7 @@ CERTIFICATE_VERIFY_FAILED: Missing Subject Key Identifier
 | `工作台.py` | 本機伺服器，讓網頁上的按鈕可以真的去抓 |
 | `docs/index.html` | 網頁工作台 |
 | `to_excel.py` | 完整 Excel（多工作表＋圖表＋名詞說明） |
+| `conflicts.py` | 找不同篇裡「同樣說法、數字卻不同」的句子；可單獨執行 `python conflicts.py --show 30` |
 | `report.py` | 把歷次測量整理成 `report.md` |
 | `匯出到網站.py` `同步網站.py` | 轉成兩個公開站的格式並推上去 |
 | `.github/workflows/crawl.yml` | 雲端排程與手動執行 |

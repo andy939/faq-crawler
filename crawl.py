@@ -1057,6 +1057,12 @@ def main():
     if not a.dry_run:
         save_data(recs)
         save_html(htmls)
+        # 跨條文找數字不一致，給「維護建議」用。算錯不能害整次抓取白做，所以包起來
+        try:
+            import conflicts
+            conflicts.write(list(recs.values()))
+        except Exception as e:
+            print(f"（數字不一致檢查失敗，不影響資料：{e}）")
         if not no_reconcile:   # 沒對過帳的模式不要動「現況」那幾個數字
             meta.update({
                 "count": len(recs), "got": got, "with_content": body,

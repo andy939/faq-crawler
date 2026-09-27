@@ -182,6 +182,7 @@ tr.cmp-row td{background:#fafbfc;padding:10px 12px}
 .dup .db{white-space:pre-wrap;font-size:13.5px;line-height:1.75;
          max-height:320px;overflow:auto}
 .dup .df{margin-top:8px;font-size:12.5px}
+.dup .dt{font-size:12.5px;color:var(--dim);margin-bottom:6px}
 .dup .df a{display:inline-block;margin:2px 0}
 #loading{padding:40px 0;color:var(--dim);text-align:center}
 </style>
@@ -396,7 +397,9 @@ tr.cmp-row td{background:#fafbfc;padding:10px 12px}
       這一頁是拿來發給各局處的。<b>已過期還掛著</b>是下版日期已經過了但問答還在站上；
       <b>沒設下版日期</b>表示不會自動下架，需要人工盯；<b>一年以上沒檢視</b>只看站上的
       「資料檢視」欄位，沒有值就不算（不會拿發布或更新時間頂替）；<b>沒有內容</b>是內文空白且沒有附件；<b>標題重複</b>是同一個標題
-      在站上出現一次以上，說明會註明內容一致或不同，按「比對」可以並排看差在哪。匯出的 CSV 一列一個問題，可以直接按機關拆給承辦。
+      在站上出現一次以上，說明會註明內容一致或不同，按「比對」可以並排看差在哪；<b>數字不一致</b>是不同篇裡說法幾乎一樣的句子，
+      金額、期間或電話卻不同（主題不同也會比，例如一篇講申請、一篇講收費）；
+      <b>電話位數不對</b>是 02 開頭卻不是 8 碼。匯出的 CSV 一列一個問題，可以直接按機關拆給承辦。
     </div>
   </section>
 </div>
@@ -558,15 +561,17 @@ let API_BASE = FILE_MODE ? LOCAL : '';
 const api = p => API_BASE + 'api/' + p;
 
 // ---- 載入 ------------------------------------------------------------------
-let ALL=[], META={}, RUNS=[], CHG=[], shown=200;
+let ALL=[], META={}, RUNS=[], CHG=[], CONF={groups:[],bad_phones:[]}, shown=200;
 
 Promise.all([
   fetch(DATA_BASE+'faq.json').then(r=>r.json()),
   fetch(DATA_BASE+'meta.json').then(r=>r.json()).catch(()=>({})),
   fetch(DATA_BASE+'runs.csv').then(r=>r.ok?r.text():'').catch(()=>''),
   fetch(DATA_BASE+'changes.csv').then(r=>r.ok?r.text():'').catch(()=>''),
-]).then(([faq,meta,runsTxt,chgTxt])=>{
-  ALL=faq; META=meta;
+  // 跨條文數字不一致（conflicts.py 算好的）。舊資料沒有這個檔也照常開
+  fetch(DATA_BASE+'conflicts.json').then(r=>r.ok?r.json():null).catch(()=>null),
+]).then(([faq,meta,runsTxt,chgTxt,conf])=>{
+  ALL=faq; META=meta; if(conf && conf.groups) CONF=conf;
   const a=parseCSV(runsTxt); RUNS={head:a.head, rows:a.rows.slice().reverse()};
   const b=parseCSV(chgTxt);  CHG=asObj(b.head,b.rows).reverse();
   $('#loading').hidden=true;
@@ -923,6 +928,31 @@ function dupCompare(title){
     (g.length>2?'（第一筆對第二筆，其餘各筆對第一筆）':'')+'。</div>';
 }
 
+// 數字不一致的比對：同一件事的每一句並排，數字標黃底，按的那一篇排第一個
+function numCompare(gi, sid){
+  const g=CONF.groups[gi]; if(!g) return '';
+  const bySid=new Map(ALL.map(r=>[r.sid,r]));
+  const items=[...g.items].sort((a,b)=>(b.sid===sid)-(a.sid===sid));
+  const mark=(text,marks)=>{
+    // 先切成片段再逐段 esc，避免黃底標記被跳脫掉
+    const re=new RegExp(marks.map(m=>m.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')).join('|'),'g');
+    let out='', last=0;
+    for(const m of text.matchAll(re)){ out+=esc(text.slice(last,m.index))+
+      `<mark>${esc(m[0])}</mark>`; last=m.index+m[0].length; }
+    return out+esc(text.slice(last));
+  };
+  const card=it=>{const r=bySid.get(it.sid)||{};
+    return `<div class="dup"${it.sid===sid?' style="border-color:var(--warn)"':''}>
+      <div class="dh"><b>${esc(r.dept||'（未填）')}</b>
+        <span><b style="color:var(--warn)">${esc(it.values.join('、'))}</b>　
+          <a href="${esc(r.url)}" target="_blank" rel="noopener">官網 ↗</a></span></div>
+      <div class="dt">${esc(r.title||'')}</div>
+      <div class="db">${it.marks&&it.marks.length?mark(it.text,it.marks):esc(it.text)}</div></div>`;};
+  return `<div class="dups">${items.map(card).join('')}</div>
+    <div class="hint" style="margin:6px 0 0">這幾句的說法幾乎一樣、${esc(g.name)}卻不同。
+      不一定是錯的（例如講的是不同對象、不同時期），請承辦確認。橘框是這一列那篇。</div>`;
+}
+
 function buildFix(){
   const live=ALL.filter(r=>!r.gone);
   const today=new Date().toISOString().slice(0,10), old=plus(-365);
@@ -949,6 +979,22 @@ function buildFix(){
     if(r.kind==='external') add('連到外部網站','內容不在市府網站，連結可能失效');
     if(DUPS.get((r.title||'').trim())?.length>1) add('標題重複', dupNote(r));
   });
+  // 跨條文數字不一致：每組裡的每一篇各一列，說明寫「這篇寫多少、別篇寫多少」
+  const bySid=new Map(live.map(r=>[r.sid,r]));
+  const addFor=(r,問題,說明,cmp)=>FIX.push({問題,說明,cmp,sid:r.sid,
+    機關:r.dept||'（未填）',標題:r.title,發布日期:(r.published||'').slice(0,10),
+    下版日期:(r.expire||'').slice(0,10),最後檢視:(r.reviewed||'').slice(0,10),網址:r.url});
+  CONF.groups.forEach((g,gi)=>g.items.forEach(it=>{
+    const r=bySid.get(it.sid); if(!r) return;
+    const mine=it.values.join('、');
+    const others=[...new Set(g.items.filter(x=>x!==it).map(x=>x.values.join('、')))]
+      .filter(v=>v!==mine);
+    const n=g.items.length-1;
+    addFor(r,'數字不一致',`${g.name}：這篇寫 ${mine}，同樣說法的另 ${n} 篇寫 `+
+      (others.slice(0,2).join('／')||mine)+(others.length>2?' 等':''), 'num:'+gi);
+  }));
+  CONF.bad_phones.forEach(b=>{const r=bySid.get(b.sid); if(!r) return;
+    addFor(r,'電話位數不對',`${b.phone} 只有 ${b.digits} 碼，臺北市電話是 8 碼`);});
   $('#fx').innerHTML='<option value="">全部問題類型</option>'+
     [...new Set(FIX.map(f=>f.問題))].map(k=>`<option>${esc(k)}</option>`).join('');
   $('#fdlist').innerHTML=
@@ -974,8 +1020,9 @@ function fix(){
     '<th>最後檢視</th><th>標題</th></tr>'+
     rows.slice(0,300).map(r=>`<tr>
       <td class="act 異動">${esc(r.問題)}</td><td>${esc(r.說明)}${r.問題==='標題重複'
-        ? ` <button class="ghost cmp" data-t="${esc((r.標題||'').trim())}">比對 ▾</button>`
-        : ''}</td>
+        ? ` <button class="ghost cmp" data-c="dup:${esc((r.標題||'').trim())}">比對 ▾</button>`
+        : r.cmp ? ` <button class="ghost cmp" data-c="${esc(r.cmp)}"
+            data-sid="${esc(r.sid)}">比對 ▾</button>` : ''}</td>
       <td>${esc(r.機關)}</td><td>${esc(r.下版日期)}</td><td>${esc(r.最後檢視)}</td>
       <td class="t"><a href="${esc(r.網址)}" target="_blank"
         rel="noopener">${esc(r.標題)}</a></td></tr>`).join('')+
@@ -989,7 +1036,9 @@ $('#t-fix').addEventListener('click', e=>{
   const tr=b.closest('tr'), nx=tr.nextElementSibling;
   if(nx && nx.classList.contains('cmp-row')){ nx.remove(); b.textContent='比對 ▾'; return; }
   tr.insertAdjacentHTML('afterend',
-    `<tr class="cmp-row"><td colspan="6">${dupCompare(b.dataset.t)}</td></tr>`);
+    `<tr class="cmp-row"><td colspan="6">${
+      b.dataset.c.startsWith('num:') ? numCompare(+b.dataset.c.slice(4), b.dataset.sid)
+                                     : dupCompare(b.dataset.c.slice(4))}</td></tr>`);
   b.textContent='收起 ▴';
 });
 const FIX_COLS=['機關','問題','說明','標題','發布日期','下版日期','最後檢視','網址'];

@@ -264,6 +264,39 @@ def main():
             add("標題重複", dup_note(r, group))
         if exp and today <= exp <= soon:
             add("90 天內到期", f"下版日期 {exp}")
+
+    # 跨條文數字不一致、電話位數不對（conflicts.py 算好的，網頁讀的也是同一份）
+    conf_path = os.path.join(C.DOCS, "conflicts.json")
+    conf = {"groups": [], "bad_phones": []}
+    if os.path.exists(conf_path):
+        with open(conf_path, encoding="utf-8") as f:
+            conf = json.load(f)
+    by_sid = {r["sid"]: r for r in live}
+
+    def add_for(r, problem, why):
+        fix.append([r.get("dept") or "（未填）", problem, why, r["title"],
+                    (r.get("published") or "")[:10], (r.get("expire") or "")[:10],
+                    (r.get("reviewed") or "")[:10], r["url"]])
+
+    for g in conf.get("groups", []):
+        for it in g["items"]:
+            r = by_sid.get(it["sid"])
+            if not r:
+                continue
+            mine = "、".join(it["values"])
+            # Excel 沒有「比對」按鈕，把另外幾篇是誰、寫多少直接寫進說明
+            others = [x for x in g["items"] if x is not it]
+            ref = "；".join(
+                f"{(by_sid.get(x['sid']) or {}).get('dept', '')}《"
+                f"{(by_sid.get(x['sid']) or {}).get('title', '')[:24]}》寫 "
+                f"{'、'.join(x['values'])}" for x in others[:3])
+            add_for(r, "數字不一致",
+                    f"{g['name']}：這篇寫 {mine}。{ref}"
+                    + (f"；另 {len(others) - 3} 篇" if len(others) > 3 else ""))
+    for b in conf.get("bad_phones", []):
+        r = by_sid.get(b["sid"])
+        if r:
+            add_for(r, "電話位數不對", f"{b['phone']} 只有 {b['digits']} 碼，臺北市電話是 8 碼")
     fix.sort(key=lambda x: (x[0], x[1]))
     sheet(wb, "維護建議",
           ["機關", "問題", "說明", "標題", "發布日期", "下版日期", "最後檢視", "網址"],
