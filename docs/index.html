@@ -172,7 +172,7 @@ section[hidden]{display:none}
       margin-bottom:7px;cursor:pointer}
 .item:hover{border-color:var(--accent)}
 .item h3{margin:0;font-size:14.5px;font-weight:600;line-height:1.45}
-/* 展開讀長答案時，標題釘在清單頂端，捲到哪都知道是哪一題 */
+/* 鎖定時清單只剩這一題，讀長答案往下捲，標題釘在清單頂端 */
 .item.open h3{position:sticky;top:0;z-index:1;background:var(--soft);color:var(--deep);
       margin:-10px -13px 0;padding:10px 13px 4px;border-radius:8px 8px 0 0}
 /* 展開（鎖住）的那一題整張換淺青底＋左邊一條粗線，一眼看得出現在鎖著哪一題；
@@ -187,10 +187,8 @@ section[hidden]{display:none}
 .body{margin-top:10px;padding-top:10px;border-top:1px solid var(--line);
       white-space:pre-wrap;font-size:13.5px;line-height:1.75}
 .body .files a{display:block;margin-top:3px}
-/* 展開的答案自己在框裡捲，標題留在上面不會被捲走；捲到底也不會帶著整個清單跑
-   （overscroll-behavior）。跟秘密客的答題區同一套。 */
-.item.open .body{max-height:58vh;overflow:auto;overscroll-behavior:contain;
-      padding-right:6px}
+.peek-acts{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.peek-acts a{display:inline!important;margin:0!important}
 mark{background:#ffe9a8;border-radius:2px}
 .bars .b{display:flex;align-items:center;gap:8px;font-size:13px;margin-bottom:3px}
 .bars .l{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -792,15 +790,34 @@ function orgPanel(){
 }
 bindOrgs(ORG_FAQ, '#dept', ()=>render(true));
 
+// 點一題就「鎖定」：清單只留這一題，捲動只在這一題裡，不會跑到別題；
+// 點標題、按「收合」或 Esc 回到清單原本的位置。一次只能鎖一題。跟秘密客桌面版同一套。
+let PEEK=null, KEEP=null;
+function bodyHtml(r){
+  const files=(r.files||[]).map(f=>
+    `<a href="${esc(f.url)}" target="_blank" rel="noopener">📎 ${esc(f.name)}
+     <span style="color:var(--dim)">${esc(f.kind)} ${esc(f.size)}</span></a>`).join('');
+  return `<div class="body">${r.answer?esc(r.answer)
+      :'<i style="color:var(--dim)">（站上沒有內文）</i>'}${
+    files?`<div class="files"><b>相關檔案</b>${files}</div>`:''}
+    <div class="files peek-acts"><a href="${esc(r.url)}" target="_blank"
+       rel="noopener">在市府官網開啟 ↗</a>
+     <span style="color:var(--dim)">更新 ${esc(r.updated||'—')}
+       　檢視 ${esc(r.reviewed||'—')}　維護 ${esc(r.maintainer||'—')}</span>
+     <span style="flex:1"></span><button class="ghost" data-close="1">收合</button></div></div>`;
+}
 function render(reset){
-  if(reset){ shown=200; $('#listbox').scrollTop=0; }
+  if(reset){ shown=200; PEEK=null; KEEP=null; $('#listbox').scrollTop=0; }
   LIST=filtered();
   orgPanel();
   const ts=terms();
-  $('#count').textContent=`符合 ${nf(LIST.length)} 筆`+
-    (LIST.length>shown?`，顯示前 ${nf(shown)} 筆`:'');
-  $('#list').innerHTML=LIST.slice(0,shown).map((r,i)=>`
-    <div class="item" data-i="${i}">
+  const idx=PEEK!=null ? [PEEK]
+    : LIST.slice(0,shown).map((_,i)=>i);
+  $('#count').textContent=PEEK!=null
+    ? '🔒 已鎖定這題，點標題、按「收合」或 Esc 回到清單'
+    : `符合 ${nf(LIST.length)} 筆`+(LIST.length>shown?`，顯示前 ${nf(shown)} 筆`:'');
+  $('#list').innerHTML=idx.map(i=>{const r=LIST[i], open=i===PEEK; return `
+    <div class="item${open?' open':''}" data-i="${i}">
       <h3>${hl(r.title,ts)}</h3>
       <div class="meta2">
         <span>${esc(r.dept)}</span>
@@ -811,53 +828,33 @@ function render(reset){
         ${r.kind==='external'?'<span class="badge">外部連結</span>':''}
         ${r.gone?`<span class="badge gone">已下架 ${esc(r.gone)}</span>`:''}
       </div>
-      ${snippet(r,ts)?`<div class="meta2">${snippet(r,ts)}</div>`:''}
-    </div>`).join('');
-  $('#more').hidden = LIST.length<=shown;
+      ${open?bodyHtml(r):snippet(r,ts)?`<div class="meta2">${snippet(r,ts)}</div>`:''}
+    </div>`;}).join('');
+  $('#more').hidden = PEEK!=null || LIST.length<=shown;
+}
+function peek(i){
+  const box=$('#listbox');
+  if(PEEK==null) KEEP=box.scrollTop;          // 記住鎖定前捲到哪
+  PEEK=i; render(false);
+  box.scrollTop=0; scrollTo({top:0});
+}
+function unpeek(){
+  if(PEEK==null) return;
+  PEEK=null; render(false);
+  if(KEEP!=null) $('#listbox').scrollTop=KEEP;
+  KEEP=null;
 }
 $('#list').onclick=e=>{
   const el=e.target.closest('.item'); if(!el) return;
-  // 展開後只有點標題才收起；點答案裡（選字、點連結、捲動）不要把它關掉
+  if(e.target.closest('[data-close]')){ unpeek(); return; }
+  // 點答案裡（選字、點連結）不收合
   if(e.target.closest('.body')) return;
-  const open=el.querySelector('.body');
-  if(open){
-    open.remove(); el.classList.remove('open');
-    // 從釘在頂端的標題收起時，這一題的開頭早就捲出畫面了；答案一消失，
-    // 下面的題目會整批跳上來，看起來像清單自己亂捲。對齊回這一題的標題。
-    const box=$('#listbox');
-    if(getComputedStyle(box).overflowY==='auto'){
-      const d=el.getBoundingClientRect().top-box.getBoundingClientRect().top;
-      if(d<0) box.scrollTop+=d;
-    } else {
-      const t=el.getBoundingClientRect().top;   // 窄螢幕是整頁捲
-      if(t<0) scrollBy(0,t);
-    }
-    return;
-  }
-  el.classList.add('open');
-  // 打開時把這一題對齊到清單頂端，答案框整個看得到
-  requestAnimationFrame(()=>{
-    const box=$('#listbox');
-    if(getComputedStyle(box).overflowY!=='auto') return;
-    const top=el.getBoundingClientRect().top-box.getBoundingClientRect().top;
-    const bottom=el.getBoundingClientRect().bottom-box.getBoundingClientRect().bottom;
-    if(top<0||bottom>0) box.scrollTop+=top;
-  });
-  const r=LIST[+el.dataset.i];
-  const files=(r.files||[]).map(f=>
-    `<a href="${esc(f.url)}" target="_blank" rel="noopener">📎 ${esc(f.name)}
-     <span style="color:var(--dim)">${esc(f.kind)} ${esc(f.size)}</span></a>`).join('');
-  const d=document.createElement('div');
-  d.className='body';
-  d.innerHTML=(r.answer?esc(r.answer)
-      :'<i style="color:var(--dim)">（站上沒有內文）</i>')+
-    (files?`<div class="files"><b>相關檔案</b>${files}</div>`:'')+
-    `<div class="files"><a href="${esc(r.url)}" target="_blank"
-       rel="noopener">在市府官網開啟 ↗</a>
-     <span style="color:var(--dim)">　更新 ${esc(r.updated||'—')}
-       　檢視 ${esc(r.reviewed||'—')}　維護 ${esc(r.maintainer||'—')}</span></div>`;
-  el.appendChild(d);
+  const i=+el.dataset.i;
+  if(PEEK===i) unpeek(); else peek(i);
 };
+document.addEventListener('keydown',e=>{
+  if(e.key==='Escape' && PEEK!=null && !$('section[data-page="faq"]').hidden) unpeek();
+});
 let timer;
 $('#q').oninput=()=>{clearTimeout(timer);timer=setTimeout(()=>render(true),180);};
 $('#q').addEventListener('focus',()=>{delete $('#q').dataset.expire;});
