@@ -1387,8 +1387,10 @@ async function gha(){
         <a href="${esc(w.html_url)}" target="_blank" rel="noopener">紀錄↗</a>
       </div>`;}).join('');
     if(runs.some(w=>w.status!=='completed')){
-      $('#gha-live').textContent='有一輪正在跑，20 秒後自動更新…';
-      ghaTimer=setTimeout(gha,20000);
+      // 90 秒一次：沒登入的 GitHub API 每個 IP 每小時只給 60 次，
+      // 以前 20 秒一次，開著一個分頁就把額度用光，連別的工具都查不到
+      $('#gha-live').textContent='有一輪正在跑，90 秒後自動更新…';
+      ghaTimer=setTimeout(gha,90000);
     } else $('#gha-live').textContent='';
   }catch(e){
     $('#gha').innerHTML='<span style="color:var(--danger)">讀不到 GitHub 狀態：'+

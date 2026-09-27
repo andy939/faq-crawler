@@ -143,6 +143,12 @@ TAG_RE = re.compile(r"<[^>]+>")
 # TAG_RE 只拿掉標籤本身，中間的 CSS／程式碼會原封不動留在答案開頭 ——
 # 所以去標籤前要先整段刪掉。
 NOISE_RE = re.compile(r"<(style|script)\b[^>]*>.*?</\1\s*>|<!--.*?-->", re.S | re.I)
+# 只有區塊標籤才換行。粗體、連結、顏色字這些行內標籤要直接拿掉 —— 以前一律換成
+# 換行，「為期<strong>101</strong>天」會被切成「為期／101／天」三行。
+BLOCK_RE = re.compile(
+    r"</?(?:p|div|br|li|ul|ol|dl|dt|dd|tr|table|thead|tbody|tfoot|caption|"
+    r"h[1-6]|blockquote|pre|hr|section|article)\b[^>]*>", re.I)
+CELL_RE = re.compile(r"</?(?:td|th)\b[^>]*>", re.I)   # 同一列的各格用空白隔開
 
 # 附件區塊：<div class="group-list file-download-multiple"> … 相關檔案
 FILEBLOCK_RE = re.compile(
@@ -158,8 +164,9 @@ FILEMETA_RE = re.compile(
 
 
 def clean_text(t):
-    t = _html.unescape(TAG_RE.sub("\n", NOISE_RE.sub("", t)))
-    t = re.sub(r"[ \t　]+", " ", t)
+    t = BLOCK_RE.sub("\n", NOISE_RE.sub("", t))
+    t = _html.unescape(TAG_RE.sub("", CELL_RE.sub(" ", t)))
+    t = re.sub(r" *\n *", "\n", re.sub(r"[ \t　]+", " ", t))
     return re.sub(r"\n\s*\n+", "\n", t).strip()
 
 
