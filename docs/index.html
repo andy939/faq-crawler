@@ -295,7 +295,7 @@ tr.cmp-row td{background:#fafbfc;padding:10px 12px}
     <div class="faqgrid">
       <aside class="orgs">
         <h4>局處分類　<span id="orgn"></span></h4>
-        <input id="orgq" placeholder="篩選局處…" style="width:100%;margin:0 0 6px">
+        <input id="orgq" type="search" placeholder="篩選局處…" style="width:100%;margin:0 0 6px">
         <div id="orglist"></div>
       </aside>
       <div>
@@ -328,7 +328,7 @@ tr.cmp-row td{background:#fafbfc;padding:10px 12px}
   <div class="faqgrid" style="margin-top:4px">
     <aside class="orgs">
       <h4>局處分類　<span id="orgn2"></span></h4>
-      <input id="orgq2" placeholder="篩選局處…" style="width:100%;margin:0 0 6px">
+      <input id="orgq2" type="search" placeholder="篩選局處…" style="width:100%;margin:0 0 6px">
       <div id="orglist2"></div>
     </aside>
     <div>
@@ -381,9 +381,10 @@ tr.cmp-row td{background:#fafbfc;padding:10px 12px}
   <section id="tab-fix">
     <div class="row" style="align-items:center;margin-bottom:12px">
       <select id="fx"><option value="">全部問題類型</option></select>
-      <input id="fd" list="fdlist" placeholder="全部機關（打幾個字就好）"
+      <input id="fd" type="search" list="fdlist" placeholder="全部機關（打幾個字就好）"
              style="width:230px">
       <datalist id="fdlist"></datalist>
+      <button class="ghost" id="fclr" hidden>✕ 清除篩選</button>
       <button class="ghost" id="fcsv">匯出待修正清單 Excel</button>
       <span class="hint" id="f-count" style="margin:0"></span>
     </div>
@@ -1010,6 +1011,8 @@ const FIX_ACC=[r=>r.問題, r=>r.說明, r=>r.機關, r=>r.下版日期,
                r=>r.最後檢視, r=>r.標題];
 function fix(){
   const rows=applySort('fix', fixRows(), FIX_ACC);
+  // 點長條會替你填好篩選，沒有這顆鈕就只能一個字一個字刪回去
+  $('#fclr').hidden=!($('#fx').value||$('#fd').value);
   $('#f-count').textContent=`共 ${nf(rows.length)} 項待修正，`+
     `涉及 ${nf(new Set(rows.map(r=>r.sid)).size)} 筆問答`;
   const tally=f=>{const m=new Map();rows.forEach(r=>m.set(r[f],(m.get(r[f])||0)+1));
@@ -1031,6 +1034,7 @@ function fix(){
   bindSort($('#t-fix'), 'fix', fix);
 }
 $('#fx').onchange=fix; $('#fd').oninput=fix;
+$('#fclr').onclick=()=>{$('#fx').value=''; $('#fd').value=''; fix();};
 // 按「比對」在那一列底下展開並排比較，再按一次收起來
 $('#t-fix').addEventListener('click', e=>{
   const b=e.target.closest('button.cmp'); if(!b) return;
