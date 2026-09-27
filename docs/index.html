@@ -95,6 +95,10 @@ button{background:var(--accent);color:#fff;border-color:transparent;cursor:point
 button:hover{filter:brightness(.93)}
 button.ghost{background:#fff;color:var(--ink);border-color:var(--line);
              font-weight:400}
+/* 長得像 ghost 按鈕的連結（GitHub 倉庫） */
+a.btnlink{display:inline-block;padding:8px 18px;border:1px solid var(--line);
+          border-radius:7px;background:#fff;color:var(--ink);text-decoration:none}
+a.btnlink:hover{filter:brightness(.93)}
 button.stop{background:var(--danger);color:#fff;border-color:transparent}
 button:disabled{opacity:.45;cursor:default;filter:none}
 .hint{color:var(--dim);font-size:12.5px;margin-top:9px;min-height:1.5em}
@@ -194,12 +198,6 @@ tr.cmp-row td{background:#fafbfc;padding:10px 12px}
     <h1>臺北市政府常見問答 · 爬蟲工作台</h1>
     <span class="meta" id="ov">載入中…</span>
   </div>
-  <div class="links">
-    <a id="repolink" href="#" target="_blank" rel="noopener"
-       title="程式碼與資料的雲端備份，兩台電腦靠它同步">GitHub 倉庫 ↗</a>
-    <a id="runlink" href="#" target="_blank" rel="noopener"
-       title="在 GitHub 的機器上跑爬蟲（不占用你的電腦和你的 IP）">雲端抓取 ↗</a>
-  </div>
 </header>
 
 <div class="layout">
@@ -217,9 +215,25 @@ tr.cmp-row td{background:#fafbfc;padding:10px 12px}
 
 <main>
 <section data-page="crawl" hidden>
-<!-- ===== 抓取（只有本機工作台才會出現）===== -->
+<!-- ===== 雲端抓取：在 GitHub 的機器上跑，哪裡打開這頁都能用 ===== -->
+<div class="card">
+  <h2>雲端抓取（GitHub）　<span>在 GitHub 的機器上跑，不占用這台電腦和網路；在公司、手機都能用</span></h2>
+  <div class="row" style="margin-bottom:10px">
+    <button id="gha-go">在 GitHub 執行 ↗</button>
+    <button class="ghost" id="gha-rf">重新整理</button>
+    <a class="ghost btnlink" id="repolink" href="#" target="_blank" rel="noopener"
+       title="程式碼與資料都在這裡">GitHub 倉庫 ↗</a>
+    <span class="hint" id="gha-live" style="margin:0;align-self:center"></span>
+  </div>
+  <div class="bars" id="gha">讀取中…</div>
+  <div class="hint">按「在 GitHub 執行」→ 右邊的 Run workflow ▾ → 選模式（平常選「補齊」）→ 綠色的 Run workflow。
+    每天凌晨也會自動跑一次。跑完約 1 分鐘，重新整理這一頁就看得到新資料；
+    秘密客與 FAQ 搜尋站不會跟著更新，要在本機工作台按「同步到網站」。</div>
+</div>
+
+<!-- ===== 本機抓取（只有本機工作台才會出現）===== -->
 <div class="card" id="panel" hidden>
-  <h2>抓取</h2>
+  <h2>本機抓取　<span>用這台電腦和它的網路去抓</span></h2>
   <div class="row">
     <div><label>抓法</label><select id="m" style="width:340px;max-width:100%"></select></div>
     <div><label>模式</label><select id="mode" style="width:210px;max-width:100%">
@@ -407,17 +421,6 @@ tr.cmp-row td{background:#fafbfc;padding:10px 12px}
 </section>
 
 <section data-page="runs" hidden>
-<!-- ===== GitHub 上的執行狀況 ===== -->
-<div class="card">
-  <h2>GitHub Actions　<span>排程與手動執行都在雲端跑，這裡看得到結果</span></h2>
-  <div class="row" style="margin-bottom:10px">
-    <button class="ghost" id="gha-go">在 GitHub 執行一次 ↗</button>
-    <button class="ghost" id="gha-rf">重新整理</button>
-    <span class="hint" id="gha-live" style="margin:0;align-self:center"></span>
-  </div>
-  <div class="bars" id="gha">讀取中…</div>
-</div>
-
 <!-- ===== 歷次測試 ===== -->
 <div class="card">
   <h2>歷次測試　<span>同樣筆數換不同抓法跑，這裡會累積成比較表</span></h2>
@@ -589,7 +592,6 @@ Promise.all([
 function init(){
   const repo = repoSlug();
   $('#repolink').href = `https://github.com/${repo}`;
-  $('#runlink').href = `https://github.com/${repo}/actions/workflows/crawl.yml`;
   overview();
   const depts=[...new Set(ALL.map(r=>r.dept).filter(Boolean))]
     .sort((a,b)=>a.localeCompare(b,'zh-Hant'));
