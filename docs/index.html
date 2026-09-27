@@ -235,11 +235,11 @@ tr.cmp-row td{background:#fafbfc;padding:10px 12px}
   <button class="fold" id="fold" title="收合／展開選單">‹</button>
   <button data-page="faq" class="on"><i>🔍</i><span>問答查詢</span></button>
   <button data-page="data"><i>📋</i><span>資料清單</span></button>
-  <button data-page="crawl"><i>🕷</i><span>爬蟲工具</span></button>
   <button data-page="stat"><i>📊</i><span>資料概況</span></button>
   <button data-page="fix"><i>🛠</i><span>維護建議</span></button>
-  <button data-page="runs"><i>⏱</i><span>執行紀錄</span></button>
   <button data-page="chg"><i>🔄</i><span>異動紀錄</span></button>
+  <button data-page="crawl"><i>🕷</i><span>爬蟲工具</span></button>
+  <button data-page="runs"><i>⏱</i><span>執行紀錄</span></button>
   <div class="sidenote" id="loading">載入資料中…</div>
 </aside>
 
@@ -633,7 +633,7 @@ function init(){
   $('#year').innerHTML='<option value="">全部年份</option>'+
     years.map(y=>`<option>${esc(y)}</option>`).join('');
   render(true); stats(); buildFix(); runsTable(); changes(); dataTable();
-  gha(); local();
+  local();                // 雲端狀態等打開「爬蟲工具」頁才問（見 goPage）
 }
 
 // ---- 標題那一行 ------------------------------------------------------------
@@ -666,6 +666,7 @@ function goPage(key){
     sec.hidden = sec.dataset.page!==key);
   $('main').scrollTop=0;
   scrollTo({top:0});            // 窄螢幕是整頁捲
+  if(key==='crawl') gha(); else clearTimeout(ghaTimer);
 }
 document.querySelectorAll('.side button[data-page]').forEach(b=>
   b.onclick=()=>goPage(b.dataset.page));
@@ -1365,11 +1366,35 @@ const DOT={success:['✔','var(--deep)'], failure:['✖','var(--danger)'],
            cancelled:['■','var(--dim)'], skipped:['–','var(--dim)'],
            in_progress:['●','var(--warn)'], queued:['○','var(--warn)']};
 let ghaTimer;
+// 雲端執行狀態先問 Cloudflare Worker：它用權杖代大家去問 GitHub、60 秒內共用一份，
+// 不管幾個人開工作台都不會把 GitHub 的額度用光。Worker 掛了才直接問 GitHub
+// （沒登入每個 IP 每小時 60 次，公司很多人共用一個對外 IP 很快就用完）。
+const GHA_WORKER='https://faq-crawler-trigger.andy939-yang.workers.dev/status';
+const GHA_KEY='gha-cache', GHA_TTL=90000;
+async function ghaFetch(){
+  try{                                   // 同一台電腦的其他分頁剛問過就沿用
+    const c=JSON.parse(localStorage.getItem(GHA_KEY)||'null');
+    if(c && Date.now()-c.t<GHA_TTL) return c.d;
+  }catch(e){}
+  let d=null;
+  try{
+    const r=await fetch(GHA_WORKER,{cache:'no-store'});
+    if(r.ok) d=await r.json();
+  }catch(e){}
+  if(!d || !d.workflow_runs){
+    // 只問爬蟲這個 workflow：問全部的話，網頁發布一多，前 8 筆全是 pages build
+    const r=await fetch(`https://api.github.com/repos/${repoSlug()}/actions/workflows/crawl.yml/runs?per_page=8`);
+    if(!r.ok) return {res:r};
+    d=await r.json();
+  }
+  try{ localStorage.setItem(GHA_KEY,JSON.stringify({t:Date.now(),d})); }catch(e){}
+  return d;
+}
 async function gha(){
   clearTimeout(ghaTimer);
   try{
-    const r=await fetch(`https://api.github.com/repos/${repoSlug()}/actions/runs?per_page=8`);
-    if(!r.ok){
+    const got=await ghaFetch(), r=got.res;
+    if(r){
       // 403／429 幾乎都是查詢額度用完：沒登入的 GitHub API 每個 IP 每小時 60 次，
       // 同一台電腦開好幾個分頁、或公司很多人共用一個對外 IP 時就會遇到
       const reset=+r.headers.get('X-RateLimit-Reset');
@@ -1383,7 +1408,7 @@ async function gha(){
       throw new Error('HTTP '+r.status+
         (r.status===404?'（repo 還沒推上去，或名字不一樣）':''));
     }
-    const runs=(await r.json()).workflow_runs.filter(w=>!/pages build/i.test(w.name));
+    const runs=got.workflow_runs.filter(w=>!/pages build/i.test(w.name));
     if(!runs.length){ $('#gha').textContent='還沒有執行紀錄'; return; }
     $('#gha').innerHTML=runs.slice(0,6).map(w=>{
       const key=w.status==='completed'?w.conclusion:w.status;
@@ -1402,14 +1427,18 @@ async function gha(){
       // 90 秒一次：沒登入的 GitHub API 每個 IP 每小時只給 60 次，
       // 以前 20 秒一次，開著一個分頁就把額度用光，連別的工具都查不到
       $('#gha-live').textContent='有一輪正在跑，90 秒後自動更新…';
-      ghaTimer=setTimeout(gha,90000);
+      // 只在「爬蟲工具」頁、而且分頁在前景時才繼續更新
+      ghaTimer=setTimeout(()=>{ if(!document.hidden &&
+        !$('section[data-page="crawl"]').hidden) gha(); },90000);
     } else $('#gha-live').textContent='';
   }catch(e){
     $('#gha').innerHTML='<span style="color:var(--danger)">暫時看不到雲端狀態：'+
       esc(e.message)+'</span>';
   }
 }
-$('#gha-rf').onclick=gha;
+$('#gha-rf').onclick=()=>{ try{localStorage.removeItem(GHA_KEY);}catch(e){} gha(); };
+document.addEventListener('visibilitychange',()=>{
+  if(!document.hidden && !$('section[data-page="crawl"]').hidden) gha(); });
 $('#gha-go').onclick=()=>open(
   `https://github.com/${repoSlug()}/actions/workflows/crawl.yml`,'_blank');
 
