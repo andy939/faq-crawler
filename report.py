@@ -23,7 +23,7 @@ import crawl as C
 def read(path):
     if not os.path.exists(path):
         return []
-    with open(path, encoding="utf-8", newline="") as f:
+    with open(path, encoding="utf-8-sig", newline="") as f:
         return list(csv.DictReader(f))
 
 

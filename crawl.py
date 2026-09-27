@@ -75,6 +75,12 @@ PROBE_RETRY_WAIT = 20    # 第一次探測偏高時，等幾秒再探一次才�
 # 所以硬跑不會弄壞資料 —— 程式沒有理由替你決定放棄。
 # 要自動停就用 --abort-after N。
 ABORT_AFTER_BLOCKS = 0
+# 官網整個掛掉跟「被擋」是兩回事：擋是站方還在、只是不給抓；掛是什麼都不回。
+# 2026-09-26 官網 19:54 掛掉，這裡照樣重試了 3 小時、6,268 次全失敗。
+# 所以：連續 1 分鐘都失敗，就「停 1 分鐘、試 1 分鐘」輪流，停的時候完全不送請求；
+# 連續 30 分鐘都失敗，就自動停止並告警。中間只要有一筆正常就回到平常的抓法。
+DOWN_WINDOW = 60         # 停、試各幾秒
+DOWN_GIVE_UP = 30 * 60   # 連續失敗多久就放棄
 MAX_GONE_CHECK = 60      # 不在清單裡的超過這個數，當作清單沒抓完整，不判下架
 TIMEOUT = 30
 MAX_RETRY = 3
@@ -111,7 +117,9 @@ DEFAULT_METHOD = "B"     # 日常補齊只抓幾筆，循序就夠，最低調
 # 那兩個每次抓都會變，存了的話每次 commit 都是八千行全改，倉庫會爆。
 # 逐筆的量測資料改存 exports/，那裡不進版本控制。
 
-RUN_COLS = ["時間", "來源", "模式", "抓法", "併發", "限速ms", "範圍",
+# 「時間」是結束時間到分鐘（舊欄位，網頁拿它排序，不能動）；
+# 另外記開始、結束，才看得出一輪是幾點跑到幾點（到分鐘就夠）。
+RUN_COLS = ["時間", "開始時間", "結束時間", "來源", "模式", "抓法", "併發", "限速ms", "範圍",
             "站上筆數", "已下載", "缺", "新增", "異動", "下架", "復原",
             "處理筆數", "請求數", "清單請求", "內文請求", "被擋", "錯誤",
             "耗時秒", "每筆毫秒", "請求每秒",
@@ -145,6 +153,12 @@ def emit(**kv):
         # 前面補換行：進度是用 \r 原地更新、不換行的，不補的話會黏在一起
         sys.stdout.write("\n@@" + json.dumps(kv, ensure_ascii=False) + "\n")
         sys.stdout.flush()
+
+
+def alert(msg):
+    """要人注意的事：工作台的紀錄框會看到這一行，另外送一個 alert 指標。"""
+    print(f"\n！！【告警 {time.strftime('%H:%M:%S')}】{msg}", flush=True)
+    emit(alert=msg)
 
 
 def stopped():
@@ -210,35 +224,55 @@ def save_meta(m):
         f.write("\n")
 
 
-def append_csv(path, cols, rows):
+def append_csv(path, cols, rows, bom=False, upgrade=None):
     """附加到 CSV。欄位改過的話會自動把整個檔案搬成新格式 ——
     不然新列是照新欄位寫的、檔頭卻還是舊的，讀出來整個錯位，
-    而且不會報錯，只會看到一張對不起來的表。"""
+    而且不會報錯，只會看到一張對不起來的表。
+
+    bom=True 給要用 Excel 開的檔：中文 Windows 的 Excel 看不到 BOM
+    會當成 Big5，整份變亂碼。docs/ 底下的不加，網頁讀的時候第一欄會多個 BOM。"""
     if not rows:
         return
+    enc = "utf-8-sig" if bom else "utf-8"
     os.makedirs(os.path.dirname(path), exist_ok=True)
     old_rows, head = [], None
     if os.path.exists(path):
-        with open(path, encoding="utf-8", newline="") as f:
+        with open(path, encoding="utf-8-sig", newline="") as f:
             rd = csv.DictReader(f)
             head = rd.fieldnames
             if head != cols:
                 old_rows = list(rd)          # 舊列，等下用新欄位重寫一次
     if head is None or head == cols:
-        with open(path, "a", encoding="utf-8", newline="") as f:
+        with open(path, "a", encoding=enc, newline="") as f:
             w = csv.DictWriter(f, cols, extrasaction="ignore")
             if head is None:
                 w.writeheader()
             w.writerows(rows)
         return
-    with open(path, "w", encoding="utf-8", newline="") as f:
+    with open(path, "w", encoding=enc, newline="") as f:
         w = csv.DictWriter(f, cols, extrasaction="ignore")
         w.writeheader()
         for r in old_rows:
+            if upgrade:
+                upgrade(r)
             w.writerow({k: r.get(k, "") for k in cols})
         w.writerows(rows)
     print(f"（{os.path.basename(path)} 欄位有變動，已搬成新格式，"
           f"舊的 {len(old_rows)} 列都留著）")
+
+
+def backfill_run(r):
+    """runs.csv 加「開始時間／結束時間」之前的舊列：用「時間」（結束，到分鐘）
+    減掉耗時秒推回去。是推算值，不是當時記下的，可能差一分鐘。"""
+    if r.get("開始時間") or not r.get("時間"):
+        return
+    try:
+        end = time.mktime(time.strptime(r["時間"], "%Y-%m-%d %H:%M"))
+        el = float(r.get("耗時秒") or 0)
+    except ValueError:
+        return
+    r["結束時間"] = r["時間"]
+    r["開始時間"] = time.strftime("%Y-%m-%d %H:%M", time.localtime(end - el))
 
 
 def where():
@@ -315,6 +349,46 @@ class Fetcher:
         self.t_wait = self.t_read = self.t_parse = 0.0
         self.blocked = self.errors = self.retries = self.streak = 0
         self.lat = []
+        self.down_since = None    # 最後一次拿到正常頁之後，第一次失敗的時間
+        self.down_phase = -1      # 目前在第幾個「試／停」區段，用來只告警一次
+
+    # -- 官網沒反應時的「停 1 分鐘、試 1 分鐘」--
+    def ok(self):
+        with self.lock:
+            since, self.down_since, self.down_phase = self.down_since, None, -1
+            self.streak = 0
+        if since is not None and time.perf_counter() - since >= DOWN_WINDOW:
+            alert(f"官網恢復回應（中斷約 {(time.perf_counter() - since) / 60:.0f} 分鐘），繼續抓")
+
+    def bad(self):
+        with self.lock:
+            if self.down_since is None:
+                self.down_since = time.perf_counter()
+
+    def gate(self):
+        """每次送請求前呼叫。官網沒反應的話，停的區段在這裡等，
+        累計太久就丟 Blocked 收尾。三條 thread 共用同一個時鐘，一起停一起試。"""
+        while True:
+            if stopped():
+                raise Blocked("使用者按了停止")
+            since = self.down_since
+            if since is None:
+                return
+            t = time.perf_counter() - since
+            if t >= DOWN_GIVE_UP:
+                raise Blocked(f"官網 {DOWN_GIVE_UP // 60} 分鐘沒有回應，自動停止")
+            phase = int(t // DOWN_WINDOW)
+            with self.lock:
+                first, self.down_phase = phase > self.down_phase, max(phase, self.down_phase)
+            left = (DOWN_GIVE_UP - t) / 60
+            if phase % 2 == 0:                     # 試的區段：照常送
+                if first and phase:
+                    alert(f"再試 {DOWN_WINDOW} 秒看官網回來沒（還剩約 {left:.0f} 分鐘就放棄）")
+                return
+            if first:
+                alert(f"官網 {t / 60:.0f} 分鐘沒有正常回應，先停 {DOWN_WINDOW} 秒"
+                      f"（還剩約 {left:.0f} 分鐘就放棄）")
+            time.sleep(1)
 
     # -- 連線 --
     def session(self):
@@ -337,8 +411,7 @@ class Fetcher:
         """回傳 (response, 等伺服器秒, 傳輸秒, 抓下bytes, 原始bytes)。"""
         last = None
         for attempt in range(MAX_RETRY):
-            if stopped():
-                raise Blocked("使用者按了停止")
+            self.gate()
             self.rate.wait()
             t0 = time.perf_counter()
             try:
@@ -348,6 +421,7 @@ class Fetcher:
                 t2 = time.perf_counter()
             except requests.RequestException as e:
                 last = e
+                self.bad()
                 with self.lock:
                     self.retries += 1
                 if attempt == MAX_RETRY - 1:
@@ -381,11 +455,12 @@ class Fetcher:
             # 被擋時站方回約 3 KB 的錯誤頁，HTTP 狀態碼仍然是 200。
             # 只看狀態碼會中招 —— 曾經把 5,947 筆好內容覆蓋成空的。
             if r.status_code == 200 and not (detail and F.is_blocked(r)):
-                with self.lock:
-                    self.streak = 0
+                self.ok()
                 return r.text
             if r.status_code == 404:
+                self.ok()                 # 404 也是官網有在回應
                 return None
+            self.bad()
             with self.lock:
                 self.blocked += 1
                 self.streak += 1
@@ -411,7 +486,7 @@ class Fetcher:
                 "等伺服器ms": round(tw * 1000, 1), "傳輸ms": round(tr * 1000, 1),
                 "解析ms": 0, "總計ms": round((tw + tr) * 1000, 1),
                 "thread": threading.current_thread().name,
-                "時間": time.strftime("%H:%M:%S"),
+                "時間": time.strftime("%Y-%m-%d %H:%M:%S"),
             }
 
         s = self.session()
@@ -424,6 +499,7 @@ class Fetcher:
         except Exception as e:
             return failed(f"連線失敗：{type(e).__name__}")
         if F.is_blocked(r):
+            self.bad()
             with self.lock:
                 self.blocked += 1
                 self.streak += 1
@@ -434,8 +510,7 @@ class Fetcher:
             # 「第幾秒開始被擋、連續擋了幾筆、多久解除」
             return failed(f"錯誤頁 HTTP{r.status_code} {len(r.content)}B",
                           tw, tr, wire, raw)
-        with self.lock:
-            self.streak = 0
+        self.ok()
 
         tp = time.perf_counter()
         d = F.parse_detail(r.text)
@@ -503,7 +578,7 @@ class Fetcher:
             "解析ms": round(t_parse * 1000, 2),
             "總計ms": round((tw + tr + t_parse) * 1000, 1),
             "thread": threading.current_thread().name,
-            "時間": time.strftime("%H:%M:%S"),
+            "時間": time.strftime("%Y-%m-%d %H:%M:%S"),
         }
         return rec, sample
 
@@ -823,6 +898,7 @@ def main():
         os.remove(STOP)                      # 上一輪按停留下來的
 
     t0 = time.perf_counter()
+    started = time.localtime()
     recs = load_data()
     htmls = load_html()          # 原始 HTML，另外一份
     meta = load_meta()
@@ -1076,8 +1152,12 @@ def main():
             if a.full and not note:
                 meta["last_full"] = meta["last_run"]
         save_meta(meta)
+        ended = time.localtime()
         append_csv(RUNS, RUN_COLS, [{
-            "時間": time.strftime("%Y-%m-%d %H:%M"), "來源": where(), "模式": mode,
+            "時間": time.strftime("%Y-%m-%d %H:%M", ended),
+            "開始時間": time.strftime("%Y-%m-%d %H:%M", started),
+            "結束時間": time.strftime("%Y-%m-%d %H:%M", ended),
+            "來源": where(), "模式": mode,
             "抓法": f"{a.method}・{fe.label}", "併發": fe.workers,
             "限速ms": a.rate_ms, "範圍": scope,
             "站上筆數": total or "", "已下載": got,
@@ -1102,15 +1182,17 @@ def main():
             "延遲p50ms": round(pct(lat, 0.5) * 1000),
             "延遲p95ms": round(pct(lat, 0.95) * 1000),
             "備註": note,
-        }])
+        }], upgrade=backfill_run)
         append_csv(CHANGES, CHANGE_COLS, events)
         if samples:
             # 逐筆原始測量。faq.json 會被後續執行覆蓋，這份不會 ——
             # 之後想到新的分析角度，重算就好，不用重爬。
-            name = (f"{time.strftime('%Y%m%d_%H%M%S')}_方法{a.method}"
-                    f"_{n_s}筆.csv")
+            # 檔名帶開始與結束，一看就知道是幾點跑到幾點
+            name = (f"{time.strftime('%Y%m%d_%H%M', started)}"
+                    f"-{time.strftime('%Y%m%d_%H%M', ended)}"
+                    f"_方法{a.method}_{n_s}筆.csv")
             append_csv(os.path.join(EXPORTS, name), SAMPLE_COLS,
-                       sorted(samples, key=lambda s: s["seq"]))
+                       sorted(samples, key=lambda s: s["seq"]), bom=True)
             print(f"逐筆原始測量 → exports/{name}")
 
     if os.path.exists(STOP):
@@ -1130,7 +1212,9 @@ def main():
         verdict = f"！還差 {total - got} 筆沒抓到"
     else:
         verdict = f"！多出 {got - total} 筆（可能剛下架、還沒確認）"
-    print(f"\n站上 {total} 筆　已下載 {got} 筆　{verdict}")
+    print(f"\n開始 {time.strftime('%Y-%m-%d %H:%M', started)}　"
+          f"結束 {time.strftime('%Y-%m-%d %H:%M')}　共 {el / 60:.0f} 分鐘")
+    print(f"站上 {total} 筆　已下載 {got} 筆　{verdict}")
     print(f"有內容 {body} 筆（其餘是站上本來就沒填內容的）"
           + (f"，另有 {len(recs)-len(live)} 筆已下架但保留"
              if len(recs) != len(live) else ""))
