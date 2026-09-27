@@ -1,9 +1,8 @@
 name: 更新 FAQ
 
-# 三種啟動方式：
+# 兩種啟動方式：
 #   1. Actions 分頁按 Run workflow（可選模式）
-#   2. 每天 22:00（臺北）自動補齊
-#   3. 每週日 23:00（臺北）全站重抓一遍，抓舊資料的異動
+#   2. 每天 07:00（臺北）全站重抓一遍 —— 新增、異動、下架一次都抓到
 on:
   workflow_dispatch:
     inputs:
@@ -14,10 +13,13 @@ on:
         options:
           - 補齊（站上有幾筆就抓到幾筆）
           - 補齊＋複查 300 筆
-          - 全站重抓（約 50 分鐘）
+          - 全站重抓（約 1.5 小時）
   schedule:
-    - cron: '0 14 * * *'     # 每天 22:00 臺北
-    - cron: '0 15 * * 0'     # 每週日 23:00 臺北
+    # 每天 07:00 臺北（＝前一天 23:00 UTC）。GitHub 的排程常延後幾十分鐘到幾小時，
+    # 所以這是「最早 7 點開始」，不是準點。
+    # 以前是每天 22:00 補齊＋複查、週日 23:00 全站兩班，兩班延後到同一個
+    # 時間時，GitHub 只留一班在排隊，全站那班被擠掉過（2026-09-20）。
+    - cron: '0 23 * * *'
 
 permissions:
   contents: write
@@ -34,7 +36,9 @@ concurrency:                  # 兩輪同時跑會互相蓋掉 commit
 jobs:
   crawl:
     runs-on: ubuntu-latest
-    timeout-minutes: 120
+    # 全站用併發 3 約 1.5 小時；官網沒反應時爬蟲最多等 30 分鐘就自己停，
+    # 這裡多留餘裕，避免抓到一半被 GitHub 強制中止、連已抓的都存不進去。
+    timeout-minutes: 300
     steps:
       - uses: actions/checkout@v4
 
@@ -47,22 +51,18 @@ jobs:
       - name: 抓取
         id: run
         run: |
+          # 全站一律用 E（併發 3）：從 GitHub 抓一筆約 1.8 秒，循序要 4 小時以上
           case "${{ inputs.mode }}" in
-            *全站*)   ARGS="--full" ;;
+            *全站*)   ARGS="--full --method E" ;;
             *複查*)   ARGS="--refresh 300" ;;
             *)        ARGS="" ;;
           esac
-          # 排程：週日那班走全站，平日走「補齊＋複查 500 筆」。
-          # 為什麼平日要複查：官網清單只印發布日期、不印更新時間，
-          # 所以既有問答的「內容被改了」從清單上看不出來，非得去敲內文頁不可。
-          # 每天輪 500 筆，約 17 天可以輪完全站；週日的全站重抓則保證
-          # 最慢 7 天一定會發現。兩者搭配，改動不會石沉大海。
+          # 排程一律全站。官網清單只印發布日期、不印更新時間，既有問答的
+          # 「內容被改了」從清單上看不出來，非得逐筆敲內文頁不可 —— 每天全站
+          # 就保證最慢一天發現。官網沒反應時的處理跟本機一樣（crawl.py 裡）：
+          # 連續 1 分鐘失敗就停 1 分鐘、試 1 分鐘，連續 30 分鐘都失敗就停止。
           if [ -z "${{ inputs.mode }}" ]; then
-            if [ "${{ github.event.schedule }}" = "0 15 * * 0" ]; then
-              ARGS="--full"
-            else
-              ARGS="--refresh 500"
-            fi
+            ARGS="--full --method E"
           fi
           echo "模式參數：${ARGS:-（補齊）}"
           python crawl.py $ARGS 2>&1 | tee run.log

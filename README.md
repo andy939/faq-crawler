@@ -231,7 +231,7 @@ thread 歸屬，以及**錯誤頁與失敗也會留一列**（分析限流要用
 
 repo 的 Actions 分頁 → 「更新 FAQ」→ Run workflow，
 用 GitHub 的機器去抓，不占用你的電腦和你的 IP（額度各算各的），
-抓完自動 commit 回 repo。另有每日與每週的排程。
+抓完自動 commit 回 repo。另有每天早上 7 點（臺北）的全站重抓排程。
 
 實測 GitHub 的美國 IP **沒有**被市府網站擋。
 
