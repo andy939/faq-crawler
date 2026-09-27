@@ -11,10 +11,14 @@
       --accent:#0cb5b5;--deep:#0a7f7f;--danger:#c0392b;--warn:#a8541c;
       --navy:#1d6fd6}
 *{box-sizing:border-box}
+/* 整個畫面固定一個螢幕高、網頁本身不捲：頂條和左側選單永遠在原位，
+   只有內容區（和問答查詢裡的兩個清單）在自己的框框裡捲。跟秘密客桌面版同一套做法。 */
+html,body{height:100%}
 body{margin:0;font:14px/1.6 -apple-system,"PingFang TC","Microsoft JhengHei",
-     "Noto Sans TC",sans-serif;background:var(--bg);color:var(--ink)}
+     "Noto Sans TC",sans-serif;background:var(--bg);color:var(--ink);
+     display:flex;flex-direction:column;overflow:hidden}
 /* 頂條：深藍，左邊標題＋一行式狀態，右邊去 GitHub */
-.topbar{background:var(--navy);color:#fff;padding:12px 22px;display:flex;
+.topbar{flex:none;background:var(--navy);color:#fff;padding:12px 22px;display:flex;
         align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap}
 .topbar .tt{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px}
 .topbar .links{display:flex;gap:16px;white-space:nowrap;flex:0 0 auto}
@@ -23,10 +27,10 @@ body{margin:0;font:14px/1.6 -apple-system,"PingFang TC","Microsoft JhengHei",
 h1{margin:0;font-size:16px;color:#fff}
 
 /* 左側分區 */
-.layout{max-width:1240px;margin:16px auto;padding:0 16px;display:grid;
-        grid-template-columns:190px minmax(0,1fr);gap:16px;align-items:start}
+.layout{flex:1;min-height:0;width:100%;max-width:1240px;margin:0 auto;padding:16px;
+        display:grid;grid-template-columns:190px minmax(0,1fr);gap:16px}
 .side{background:var(--card);border:1px solid var(--line);border-radius:10px;
-      padding:8px;position:sticky;top:16px}
+      padding:8px;align-self:start;max-height:100%;overflow:auto}
 .side button{display:flex;align-items:center;gap:10px;width:100%;
       text-align:left;background:none;border:0;border-radius:8px;
       padding:9px 12px;margin:0;font:inherit;font-size:13.5px;
@@ -44,12 +48,14 @@ h1{margin:0;font-size:16px;color:#fff}
 .layout.fold .sidenote{display:none}
 
 /* 問答查詢：左邊局處分類，右邊結果 */
-.faqgrid{display:grid;grid-template-columns:210px minmax(0,1fr);gap:16px;
-      align-items:start}
-.orgs{border:1px solid var(--line);border-radius:8px;padding:8px}
+.faqgrid{flex:1;min-height:0;display:grid;grid-template-columns:210px minmax(0,1fr);gap:16px}
+.orgs{border:1px solid var(--line);border-radius:8px;padding:8px;
+      display:flex;flex-direction:column;min-height:0}
 .orgs h4{margin:2px 6px 8px;font-size:12px;color:var(--dim);font-weight:600}
 .orgs h4 span{font-weight:400}
-#orglist{max-height:560px;overflow:auto}
+#orglist{flex:1;min-height:0;overflow:auto}
+.results{display:flex;flex-direction:column;min-height:0}
+#listbox{flex:1;min-height:0;overflow:auto;padding-right:4px}
 .orgs button{display:flex;width:100%;justify-content:space-between;gap:8px;
       align-items:center;background:none;border:0;border-radius:6px;
       padding:6px 8px;font:inherit;font-size:13px;font-weight:400;
@@ -76,8 +82,12 @@ h1{margin:0;font-size:16px;color:#fff}
 .topbar .meta .ok{color:#8ef0d0;font-weight:700}
 .topbar .meta .bad{color:#ffc9c2;font-weight:700}
 .topbar .meta i{font-style:normal;color:rgba(255,255,255,.35);margin:0 6px}
-main{display:grid;gap:16px;grid-template-columns:minmax(0,1fr);min-width:0}
-section[data-page]{display:grid;gap:16px}
+main{display:flex;flex-direction:column;min-width:0;min-height:0;overflow:auto}
+section[data-page]{display:grid;gap:16px;flex:none}
+/* 問答查詢撐滿內容區，由裡面的清單自己捲 */
+section[data-page="faq"]{flex:1;min-height:0;display:flex;flex-direction:column}
+section[data-page="faq"]>.card{flex:1;min-height:0;display:flex;flex-direction:column}
+#tab-faq{flex:1;min-height:0;display:flex;flex-direction:column}
 .card{background:var(--card);border:1px solid var(--line);border-radius:10px;
       padding:16px;min-width:0}
 .card h2{margin:0 0 13px;font-size:13px;color:var(--dim);font-weight:600;
@@ -147,6 +157,14 @@ nav button{background:none;border:0;border-bottom:2px solid transparent;
 nav button:hover{filter:none;color:var(--ink)}
 nav button[aria-selected=true]{color:var(--ink);border-bottom-color:var(--accent);
   font-weight:600}
+/* 窄螢幕（手機）框中框很難捲，退回整頁捲動 */
+@media (max-width:900px){
+  body{display:block;overflow:auto}
+  main{overflow:visible}
+  section[data-page="faq"],section[data-page="faq"]>.card,#tab-faq,.faqgrid,
+  .results,#listbox{display:block;overflow:visible;min-height:auto}
+  .orgs{display:block}
+}
 section[hidden]{display:none}
 
 /* 問答清單 */
@@ -154,6 +172,9 @@ section[hidden]{display:none}
       margin-bottom:7px;cursor:pointer}
 .item:hover{border-color:var(--accent)}
 .item h3{margin:0;font-size:14.5px;font-weight:600;line-height:1.45}
+/* 展開讀長答案時，標題釘在清單頂端，捲到哪都知道是哪一題 */
+.item.open h3{position:sticky;top:0;z-index:1;background:var(--card);
+      margin:-10px -13px 0;padding:10px 13px 4px;border-radius:8px 8px 0 0}
 .meta2{font-size:12px;color:var(--dim);margin-top:4px;display:flex;
        flex-wrap:wrap;gap:10px}
 .body{margin-top:10px;padding-top:10px;border-top:1px solid var(--line);
@@ -312,11 +333,13 @@ tr.cmp-row td{background:#fafbfc;padding:10px 12px}
         <input id="orgq" type="search" placeholder="篩選局處…" style="width:100%;margin:0 0 6px">
         <div id="orglist"></div>
       </aside>
-      <div>
+      <div class="results">
         <div class="hint" id="count" style="margin:0 0 10px"></div>
-        <div id="list"></div>
-        <div style="text-align:center">
-          <button class="ghost" id="more" hidden>再顯示 200 筆</button>
+        <div id="listbox">
+          <div id="list"></div>
+          <div style="text-align:center">
+            <button class="ghost" id="more" hidden>再顯示 200 筆</button>
+          </div>
         </div>
       </div>
     </div>
@@ -632,7 +655,8 @@ function goPage(key){
     b.classList.toggle('on', b.dataset.page===key));
   document.querySelectorAll('section[data-page]').forEach(sec=>
     sec.hidden = sec.dataset.page!==key);
-  scrollTo({top:0,behavior:'smooth'});
+  $('main').scrollTop=0;
+  scrollTo({top:0});            // 窄螢幕是整頁捲
 }
 document.querySelectorAll('.side button[data-page]').forEach(b=>
   b.onclick=()=>goPage(b.dataset.page));
@@ -758,7 +782,7 @@ function orgPanel(){
 bindOrgs(ORG_FAQ, '#dept', ()=>render(true));
 
 function render(reset){
-  if(reset) shown=200;
+  if(reset){ shown=200; $('#listbox').scrollTop=0; }
   LIST=filtered();
   orgPanel();
   const ts=terms();
@@ -783,7 +807,8 @@ function render(reset){
 $('#list').onclick=e=>{
   const el=e.target.closest('.item'); if(!el) return;
   const open=el.querySelector('.body');
-  if(open){ open.remove(); return; }
+  if(open){ open.remove(); el.classList.remove('open'); return; }
+  el.classList.add('open');
   const r=LIST[+el.dataset.i];
   const files=(r.files||[]).map(f=>
     `<a href="${esc(f.url)}" target="_blank" rel="noopener">📎 ${esc(f.name)}
