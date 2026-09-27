@@ -180,6 +180,10 @@ section[hidden]{display:none}
 .body{margin-top:10px;padding-top:10px;border-top:1px solid var(--line);
       white-space:pre-wrap;font-size:13.5px;line-height:1.75}
 .body .files a{display:block;margin-top:3px}
+/* 展開的答案自己在框裡捲，標題留在上面不會被捲走；捲到底也不會帶著整個清單跑
+   （overscroll-behavior）。跟秘密客的答題區同一套。 */
+.item.open .body{max-height:58vh;overflow:auto;overscroll-behavior:contain;
+      padding-right:6px}
 mark{background:#ffe9a8;border-radius:2px}
 .bars .b{display:flex;align-items:center;gap:8px;font-size:13px;margin-bottom:3px}
 .bars .l{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -807,8 +811,29 @@ function render(reset){
 $('#list').onclick=e=>{
   const el=e.target.closest('.item'); if(!el) return;
   const open=el.querySelector('.body');
-  if(open){ open.remove(); el.classList.remove('open'); return; }
+  if(open){
+    open.remove(); el.classList.remove('open');
+    // 從釘在頂端的標題收起時，這一題的開頭早就捲出畫面了；答案一消失，
+    // 下面的題目會整批跳上來，看起來像清單自己亂捲。對齊回這一題的標題。
+    const box=$('#listbox');
+    if(getComputedStyle(box).overflowY==='auto'){
+      const d=el.getBoundingClientRect().top-box.getBoundingClientRect().top;
+      if(d<0) box.scrollTop+=d;
+    } else {
+      const t=el.getBoundingClientRect().top;   // 窄螢幕是整頁捲
+      if(t<0) scrollBy(0,t);
+    }
+    return;
+  }
   el.classList.add('open');
+  // 打開時把這一題對齊到清單頂端，答案框整個看得到
+  requestAnimationFrame(()=>{
+    const box=$('#listbox');
+    if(getComputedStyle(box).overflowY!=='auto') return;
+    const top=el.getBoundingClientRect().top-box.getBoundingClientRect().top;
+    const bottom=el.getBoundingClientRect().bottom-box.getBoundingClientRect().bottom;
+    if(top<0||bottom>0) box.scrollTop+=top;
+  });
   const r=LIST[+el.dataset.i];
   const files=(r.files||[]).map(f=>
     `<a href="${esc(f.url)}" target="_blank" rel="noopener">📎 ${esc(f.name)}
