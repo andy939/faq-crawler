@@ -1369,8 +1369,20 @@ async function gha(){
   clearTimeout(ghaTimer);
   try{
     const r=await fetch(`https://api.github.com/repos/${repoSlug()}/actions/runs?per_page=8`);
-    if(!r.ok) throw new Error('HTTP '+r.status+
-      (r.status===404?'（repo 還沒推上去，或名字不一樣）':''));
+    if(!r.ok){
+      // 403／429 幾乎都是查詢額度用完：沒登入的 GitHub API 每個 IP 每小時 60 次，
+      // 同一台電腦開好幾個分頁、或公司很多人共用一個對外 IP 時就會遇到
+      const reset=+r.headers.get('X-RateLimit-Reset');
+      if((r.status===403||r.status===429)&&r.headers.get('X-RateLimit-Remaining')==='0'){
+        const at=reset?new Date(reset*1000).toLocaleTimeString('zh-TW',
+          {hour:'2-digit',minute:'2-digit'}):'';
+        throw new Error('這台電腦一小時內向 GitHub 問太多次了，GitHub 暫時不回答'+
+          (at?`，約 ${at} 恢復，到時按「重新整理」`:'，稍後再按「重新整理」')+
+          '。只是暫時看不到狀態，爬蟲照常在跑');
+      }
+      throw new Error('HTTP '+r.status+
+        (r.status===404?'（repo 還沒推上去，或名字不一樣）':''));
+    }
     const runs=(await r.json()).workflow_runs.filter(w=>!/pages build/i.test(w.name));
     if(!runs.length){ $('#gha').textContent='還沒有執行紀錄'; return; }
     $('#gha').innerHTML=runs.slice(0,6).map(w=>{
@@ -1393,7 +1405,7 @@ async function gha(){
       ghaTimer=setTimeout(gha,90000);
     } else $('#gha-live').textContent='';
   }catch(e){
-    $('#gha').innerHTML='<span style="color:var(--danger)">讀不到 GitHub 狀態：'+
+    $('#gha').innerHTML='<span style="color:var(--danger)">暫時看不到雲端狀態：'+
       esc(e.message)+'</span>';
   }
 }
