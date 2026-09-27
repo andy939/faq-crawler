@@ -88,6 +88,14 @@ section[data-page]{display:grid;gap:16px;flex:none}
 section[data-page="faq"]{flex:1;min-height:0;display:flex;flex-direction:column}
 section[data-page="faq"]>.card{flex:1;min-height:0;display:flex;flex-direction:column}
 #tab-faq{flex:1;min-height:0;display:flex;flex-direction:column}
+/* 爬蟲工具的密碼小視窗 */
+#pw{position:fixed;inset:0;background:rgba(20,30,45,.35);display:flex;
+    align-items:center;justify-content:center;z-index:50}
+#pw[hidden]{display:none}
+#pw form{background:var(--card);border-radius:12px;padding:20px 22px;width:300px;
+    box-shadow:0 10px 30px rgba(0,0,0,.18);display:flex;flex-direction:column;gap:10px}
+#pw h3{margin:0;font-size:15px}
+#pw .msg{font-size:12.5px;color:var(--danger);min-height:1.2em}
 .card{background:var(--card);border:1px solid var(--line);border-radius:10px;
       padding:16px;min-width:0}
 .card h2{margin:0 0 13px;font-size:13px;color:var(--dim);font-weight:600;
@@ -516,6 +524,18 @@ tr.cmp-row td{background:#fafbfc;padding:10px 12px}
 </div>
 
 
+<div id="pw" hidden>
+  <form>
+    <h3>🔒 爬蟲工具</h3>
+    <div class="hint" style="margin:0">請輸入密碼</div>
+    <input id="pwin" type="password" inputmode="numeric" autocomplete="off">
+    <div class="msg" id="pwmsg"></div>
+    <div class="row" style="justify-content:flex-end;gap:8px">
+      <button type="button" class="ghost" id="pwno">取消</button>
+      <button type="submit">進入</button>
+    </div>
+  </form>
+</div>
 <script>
 // ---- 小工具 ----------------------------------------------------------------
 const $ = s => document.querySelector(s);
@@ -659,7 +679,32 @@ function overview(){
 
 // ---- 分頁 ------------------------------------------------------------------
 // 左側欄切換分區
+// 爬蟲工具要密碼（預設 0000）。這只是擋一般人誤入誤按的門牌，不是鎖 ——
+// 網頁是公開的，懂的人看原始碼就能繞過；真正啟動雲端爬蟲還是要登入 andy939 的 GitHub。
+// 存的是 SHA-256，原始碼裡不會直接看到密碼。改密碼：把新密碼的 SHA-256 貼到 PW_HASH。
+// 本機工作台（自己的電腦）不問；同一個分頁輸入一次就不再問。
+const PW_HASH='9af15b336e6a9619928537df30b2e6a2376569fcf9d7e773eccede65606529a0';
+let pwOk=false;
+try{ pwOk=sessionStorage.getItem('crawl-pw')==='1'; }catch(e){}
+async function sha256(t){
+  const b=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(t));
+  return [...new Uint8Array(b)].map(x=>x.toString(16).padStart(2,'0')).join('');
+}
+function askPw(){
+  $('#pw').hidden=false; $('#pwmsg').textContent=''; $('#pwin').value='';
+  setTimeout(()=>$('#pwin').focus(),30);
+}
+$('#pw form').onsubmit=async e=>{
+  e.preventDefault();
+  if(await sha256($('#pwin').value)===PW_HASH){
+    pwOk=true; try{ sessionStorage.setItem('crawl-pw','1'); }catch(e){}
+    $('#pw').hidden=true; goPage('crawl');
+  } else { $('#pwmsg').textContent='密碼不對'; $('#pwin').select(); }
+};
+$('#pwno').onclick=()=>{ $('#pw').hidden=true; };
+$('#pw').addEventListener('keydown',e=>{ if(e.key==='Escape') $('#pw').hidden=true; });
 function goPage(key){
+  if(key==='crawl' && !pwOk && !LOCAL_OK){ askPw(); return; }
   document.querySelectorAll('.side button').forEach(b=>
     b.classList.toggle('on', b.dataset.page===key));
   document.querySelectorAll('section[data-page]').forEach(sec=>
