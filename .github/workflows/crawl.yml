@@ -40,7 +40,11 @@ jobs:
     # 這裡多留餘裕，避免抓到一半被 GitHub 強制中止、連已抓的都存不進去。
     timeout-minutes: 300
     steps:
+      # 取「開跑當下」最新的 main，不是「排進佇列那一刻」的版本 ——
+      # 排在前一輪後面等的那一輪，不這樣會拿舊資料開跑，存檔時跟前一輪衝突。
       - uses: actions/checkout@v4
+        with:
+          ref: main
 
       - uses: actions/setup-python@v5
         with:
@@ -63,6 +67,17 @@ jobs:
           # 連續 1 分鐘失敗就停 1 分鐘、試 1 分鐘，連續 30 分鐘都失敗就停止。
           if [ -z "${{ inputs.mode }}" ]; then
             ARGS="--full --method E"
+            # GitHub 自己的排程是備援：主要由 Cloudflare 準時觸發
+            # （cloudflare/trigger-worker.js，走上面的手動模式）。
+            # 今天已經有完整跑完的全站重抓，就不再跑第二次。
+            # last_full 只有全站「沒被中斷」跑完才會寫，中斷的那輪不算。
+            TODAY=$(date '+%Y-%m-%d')
+            LAST=$(python -c "import json;print(json.load(open('docs/meta.json',encoding='utf-8')).get('last_full',''))")
+            if [ "${LAST:0:10}" = "$TODAY" ]; then
+              echo "今天（$TODAY）已經全站重抓過（$LAST），備援排程跳過。" | tee run.log
+              echo "code=0" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
           fi
           echo "模式參數：${ARGS:-（補齊）}"
           python crawl.py $ARGS 2>&1 | tee run.log
