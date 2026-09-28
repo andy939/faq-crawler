@@ -243,8 +243,16 @@ thread 歸屬，以及**錯誤頁與失敗也會留一列**（分析限流要用
 約 1 分鐘後 GitHub Pages 上的工作台就看得到新資料。
 實測 GitHub 的美國 IP **沒有**被市府網站擋。
 
-**手動**：工作台「爬蟲工具」→「在 GitHub 執行 ↗」→ Run workflow ▾ → 選模式 → Run workflow。
-在公司、手機打開 `andy939.github.io/faq-crawler/` 也能用。
+**手動**：工作台「爬蟲工具」（GitHub 網頁版要密碼）→「在 GitHub 執行 ↗」→ Run workflow ▾ → 選模式 → Run workflow。
+在公司、手機打開 `andy939.github.io/faq-crawler/` 也能用。只有登入 andy939 的 GitHub
+才看得到 Run workflow，同事拿到網頁也啟動不了爬蟲。
+
+| 模式 | 做什麼 |
+|---|---|
+| 補齊 | 只抓新出現的，幾分鐘 |
+| 補齊＋複查 300 筆 | 再輪流抽查 300 筆舊資料 |
+| 全站重抓 | 全部重抓，約 1 小時 |
+| **只同步到兩個網站（不抓）** | 不抓，直接把現有資料推到秘密客與 FAQ 搜尋站。在公司想馬上同步、或確認 `SYNC_MYSTERY` 權杖能不能用時用 |
 
 **每天自動：臺北 07:00 全站重抓**（抓法 E・併發 3，約 1.5 小時，時間上限 300 分鐘）。
 為什麼每天全站：官網清單只印發布日期、不印更新時間，局處改了既有問答
@@ -269,6 +277,10 @@ thread 歸屬，以及**錯誤頁與失敗也會留一列**（分析限流要用
   需要 repo 的 Secret `SYNC_MYSTERY`：fine-grained 權杖，只選 1999-mystery-shopper 與
   taipei-faq-search，權限 Contents: Read and write。沒設定就跳過，不影響爬蟲。
   只換兩個站的 `data/`，秘密客的 `cstest.json` 與網頁版面不動；點閱數、分類從網站現有的 data/ 接著用。
+- **雲端執行狀態（爬蟲工具頁那幾列）問的是 Worker 的 `/status`**，不直接問 GitHub。
+  沒登入的 GitHub API 每個 IP 每小時只給 60 次，公司很多人共用一個對外 IP 時很快用完
+  （會看到「這台電腦一小時內向 GitHub 問太多次了」）。Worker 用權杖代問、60 秒內共用一份；
+  Worker 掛了網頁才退回直接問 GitHub。網頁也只在爬蟲工具頁、分頁在前景時才問，90 秒一次。
 - Cloudflare 上另一個 Worker `taipei-news-trigger` 是觸發 Taipei_NEWS 的，跟這裡無關。
 
 網頁也可以從 GitHub Pages 驅動你本機的工作台 —— 瀏覽器雖然禁止 https 網頁
