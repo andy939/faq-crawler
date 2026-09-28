@@ -76,6 +76,7 @@ jobs:
             if [ "${LAST:0:10}" = "$TODAY" ]; then
               echo "今天（$TODAY）已經全站重抓過（$LAST），備援排程跳過。" | tee run.log
               echo "code=0" >> "$GITHUB_OUTPUT"
+              echo "skip=1" >> "$GITHUB_OUTPUT"
               exit 0
             fi
           fi
@@ -106,6 +107,32 @@ jobs:
           git commit -m "資料更新 $(date '+%Y-%m-%d %H:%M') ${N}"
           git pull --rebase --autostash
           git push
+
+      # 抓到官網有變動，就接著同步秘密客與 FAQ 搜尋站（以前要回家開本機工作台才會同步）。
+      # 需要 repo 的 Secret「SITES_TOKEN」：fine-grained 權杖，只選那兩個 repo，
+      # Contents: Read and write。沒設定就跳過，不影響爬蟲。
+      # 只有順利跑完的那輪才同步（跟本機的「抓完自動同步」一樣），資料不完整不推。
+      - name: 同步到兩個網站
+        if: steps.run.outputs.code == '0' && steps.run.outputs.skip != '1'
+        env:
+          SITES_TOKEN: ${{ secrets.SITES_TOKEN }}
+        run: |
+          if [ -z "$SITES_TOKEN" ]; then
+            echo '還沒設定 SITES_TOKEN，跳過同步'
+            exit 0
+          fi
+          N=$(python -c "import json;m=json.load(open('docs/meta.json',encoding='utf-8'));print(sum(m.get(k) or 0 for k in ('last_new','last_changed','last_gone','last_back')))")
+          if [ "$N" = "0" ]; then
+            echo '官網這次沒有新增、異動或下架，兩個網站不用同步'
+            exit 0
+          fi
+          echo "官網有 $N 筆變動，同步到兩個網站"
+          git config --global user.name  'github-actions[bot]'
+          git config --global user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          for r in 1999-mystery-shopper taipei-faq-search; do
+            git config --global url."https://x-access-token:${SITES_TOKEN}@github.com/andy939/$r".insteadOf "https://github.com/andy939/$r"
+          done
+          python 同步網站.py
 
       - name: 沒抓完就提醒
         if: steps.run.outputs.code != '0'
