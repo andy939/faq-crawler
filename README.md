@@ -266,7 +266,7 @@ thread 歸屬，以及**錯誤頁與失敗也會留一列**（分析限流要用
 - `last_full` 只有全站「沒被中斷」跑完才會寫，中斷的那輪不算，備援會補跑。
 - checkout 取「開跑當下」最新的 main，排隊等前一輪的那一輪不會拿舊資料開跑。
 - **官網有變動時，雲端抓完會自動同步秘密客與 FAQ 搜尋站**（只在順利跑完、而且有新增／異動／下架時）。
-  需要 repo 的 Secret `SITES_TOKEN`：fine-grained 權杖，只選 1999-mystery-shopper 與
+  需要 repo 的 Secret `SYNC_MYSTERY`：fine-grained 權杖，只選 1999-mystery-shopper 與
   taipei-faq-search，權限 Contents: Read and write。沒設定就跳過，不影響爬蟲。
   只換兩個站的 `data/`，秘密客的 `cstest.json` 與網頁版面不動；點閱數、分類從網站現有的 data/ 接著用。
 - Cloudflare 上另一個 Worker `taipei-news-trigger` 是觸發 Taipei_NEWS 的，跟這裡無關。
