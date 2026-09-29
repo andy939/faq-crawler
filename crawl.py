@@ -1236,7 +1236,10 @@ def main():
          blocked=fe.blocked, errors=fe.errors,
          t_wait=round(fe.t_wait, 2), t_read=round(fe.t_read, 2),
          t_parse=round(fe.t_parse, 3))
-    if note or (not no_reconcile and total and got != total):
+    # 離開碼 2＝沒抓完整（工作台和 GitHub 看到 2 就不同步兩個網站）。只有「少抓」才算；
+    # 「多出」是官網把某筆從清單拿掉、但內文頁還開得起來，資料是齊的 ——
+    # 2026-09-29 就因為多 1 筆被當成沒抓完，27 筆異動沒有自動同步。
+    if note or (not no_reconcile and total and got < total):
         sys.exit(2)
 
 
