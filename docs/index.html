@@ -850,7 +850,10 @@ function bodyHtml(r){
        rel="noopener">在市府官網開啟 ↗</a>
      <span style="color:var(--dim)">更新 ${esc(r.updated||'—')}
        　檢視 ${esc(r.reviewed||'—')}　維護 ${esc(r.maintainer||'—')}</span>
-     <span style="flex:1"></span><button class="ghost" data-close="1">收合</button></div></div>`;
+     <span style="flex:1"></span>
+     <button class="ghost" data-copy="title">📋 複製標題</button>
+     <button class="ghost" data-copy="answer">📋 複製答案</button>
+     <button class="ghost" data-close="1">收合</button></div></div>`;
 }
 function render(reset){
   if(reset){ shown=200; PEEK=null; KEEP=null; $('#listbox').scrollTop=0; }
@@ -890,8 +893,23 @@ function unpeek(){
   if(KEEP!=null) $('#listbox').scrollTop=KEEP;
   KEEP=null;
 }
+async function copyText(t, btn){
+  try{ await navigator.clipboard.writeText(t); }
+  catch(e){                                  // 舊瀏覽器或非 https：退回舊方法
+    const ta=document.createElement('textarea'); ta.value=t;
+    document.body.appendChild(ta); ta.select(); document.execCommand('copy'); ta.remove();
+  }
+  const old=btn.textContent; btn.textContent='✓ 已複製';
+  setTimeout(()=>{ btn.textContent=old; },1200);
+}
 $('#list').onclick=e=>{
   const el=e.target.closest('.item'); if(!el) return;
+  // 用滑鼠拖曳選字（例如要複製標題）時，放開那一下也算 click ——
+  // 有選到字就不要切換鎖定，不然一選標題就鎖住／解鎖
+  if(String(getSelection()).trim()) return;
+  const cp=e.target.closest('[data-copy]');
+  if(cp){ const r=LIST[+el.dataset.i];
+    copyText(cp.dataset.copy==='title' ? r.title : (r.answer||''), cp); return; }
   if(e.target.closest('[data-close]')){ unpeek(); return; }
   // 點答案裡（選字、點連結）不收合
   if(e.target.closest('.body')) return;
