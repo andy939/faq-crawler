@@ -1178,20 +1178,51 @@ $('#fcsv').onclick=e=>toExcel('待修正清單', FIX_COLS,
 // 目前篩出來的列送給本機工作台用 openpyxl 寫檔，再給一個下載連結。
 // 在 GitHub Pages 上沒有工作台，就退回 CSV（UTF-8 BOM，Excel 開不會亂碼）。
 let LOCAL_OK = false;      // local() 連上工作台後會設成 true
+// 匯出 Excel：本機工作台開著就讓它產生（格式最完整：凍結首列等）；
+// 沒有工作台（GitHub 網頁版、公司、手機）就在瀏覽器裡用 SheetJS 自己做 .xlsx ——
+// 以前這種情況只能退回 CSV。SheetJS 第一次按匯出才下載，平常不拖慢網頁。
+// 連 SheetJS 都載不到才退回 CSV。
+let XLSX_LIB=null;
+function loadXlsx(){
+  if(XLSX_LIB) return XLSX_LIB;
+  XLSX_LIB=new Promise((ok,no)=>{
+    const sc=document.createElement('script');
+    sc.src='https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js';
+    sc.onload=()=>window.XLSX?ok(window.XLSX):no(new Error('SheetJS 沒有載入'));
+    sc.onerror=()=>{ XLSX_LIB=null; no(new Error('下載 SheetJS 失敗')); };
+    document.head.appendChild(sc);
+  });
+  return XLSX_LIB;
+}
+async function browserXlsx(name, cols, rows){
+  const X=await loadXlsx();
+  const ws=X.utils.aoa_to_sheet([cols, ...rows]);
+  // 欄寬照內容抓（中文算兩格），最寬 60，免得一格內文撐爆整張表
+  const w=s=>[...String(s??'')].reduce((n,ch)=>n+(ch.charCodeAt(0)>255?2:1),0);
+  ws['!cols']=cols.map((c,i)=>({wch:Math.min(60,Math.max(6,w(c),
+    ...rows.slice(0,500).map(r=>w(r[i]))) + 2)}));
+  ws['!autofilter']={ref:X.utils.encode_range({s:{r:0,c:0},e:{r:rows.length,c:cols.length-1}})};
+  const wb=X.utils.book_new();
+  X.utils.book_append_sheet(wb, ws, String(name).slice(0,31));
+  X.writeFile(wb, name + '_' + new Date().toISOString().slice(0,10) + '.xlsx');
+}
 async function toExcel(name, cols, rows, btn){
   const old = btn ? btn.textContent : '';
   if(btn){ btn.disabled = true; btn.textContent = '產生中…'; }
   try{
-    if(!LOCAL_OK) throw new Error('沒有本機工作台');
-    const r = await fetch(api('xlsx'), {method:'POST',
-      headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({name, sheet: name, cols, rows})});
-    const j = await r.json();
-    if(!j.ok) throw new Error(j.msg || '產生失敗');
-    location.href = api('download?name=' + encodeURIComponent(j.file));
+    if(LOCAL_OK){
+      const r = await fetch(api('xlsx'), {method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({name, sheet: name, cols, rows})});
+      const j = await r.json();
+      if(!j.ok) throw new Error(j.msg || '產生失敗');
+      location.href = api('download?name=' + encodeURIComponent(j.file));
+    } else {
+      await browserXlsx(name, cols, rows);
+    }
     if(btn){ btn.textContent = '已產生 ✓'; setTimeout(()=>btn.textContent=old, 2500); }
   }catch(e){
-    // 沒有工作台就退回 CSV，至少不會讓人按了沒反應
+    // 工作台和 SheetJS 都不行才退回 CSV，至少不會讓人按了沒反應
     download(name + '_' + new Date().toISOString().slice(0,10) + '.csv',
       toCSV(rows.map(r=>Object.fromEntries(cols.map((c,i)=>[c, r[i]]))), cols));
     if(btn) btn.textContent = old;
