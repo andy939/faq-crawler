@@ -226,6 +226,10 @@ def parse_files(page):
     return out
 
 
+# 內文頁本身就印著點閱數（<span id="hitcount">2196077</span>），不用另外打 GetCounter.ashx
+HIT_RE = re.compile(r'id="hitcount">\s*(\d+)\s*<')
+
+
 def parse_detail(page):
     seg = page[page.find(ANCHOR):] if ANCHOR in page else page
     meta = {k: _html.unescape(v).strip() for k, v in META_RE.findall(seg)}
@@ -242,6 +246,7 @@ def parse_detail(page):
         "body": clean_text(m.group(1)) if m else "",
         "body_html": m.group(1).strip() if m else "",
         "files": parse_files(page),
+        "hits": int(h.group(1)) if (h := HIT_RE.search(page)) else None,
     }
 
 

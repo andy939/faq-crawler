@@ -51,6 +51,10 @@ DATA = os.path.join(DOCS, "faq.json")
 # 官網長什麼樣要靠這一份才還原得回來。分開放是因為它比純文字大一倍多，
 # 網頁只需要純文字，不該為了它多載十幾 MB。
 HTML = os.path.join(DOCS, "faq_html.json")
+# 點閱數另外存：它每天都會變，放進 faq.json 的話每次 commit 都是八千行全改（理由同下面不存 fetched_at）。
+# sid → 點閱數，給兩個網站排熱門用；不算進「異動」。
+HITS_FILE = os.path.join(DOCS, "hits.json")
+HITS = {}
 META = os.path.join(DOCS, "meta.json")
 RUNS = os.path.join(DOCS, "runs.csv")
 CHANGES = os.path.join(DOCS, "changes.csv")
@@ -186,6 +190,26 @@ def save_data(recs):
             f.write(",\n" if i < len(rows) - 1 else "\n")
         f.write("]\n")
     os.replace(tmp, DATA)
+
+
+def load_hits():
+    if not os.path.exists(HITS_FILE):
+        return {}
+    with open(HITS_FILE, encoding="utf-8") as f:
+        return json.load(f)
+
+
+def save_hits(h):
+    """一筆一行。沒重抓到的那幾筆保留上次的數字（日常補抓只抓幾筆）。"""
+    os.makedirs(DOCS, exist_ok=True)
+    keys = sorted(h)
+    tmp = HITS_FILE + ".tmp"
+    with open(tmp, "w", encoding="utf-8", newline="\n") as f:
+        f.write("{\n")
+        for i, k in enumerate(keys):
+            f.write(f"{json.dumps(k)}: {int(h[k])}" + (",\n" if i < len(keys) - 1 else "\n"))
+        f.write("}\n")
+    os.replace(tmp, HITS_FILE)
 
 
 def load_html():
@@ -555,6 +579,7 @@ class Fetcher:
             "files": d["files"],
         }
         rec["_html"] = d["body_html"] or ""      # 由呼叫端撈走，不會進 faq.json
+        rec["_hits"] = d.get("hits")             # 同上，存到 hits.json
         need = sum(len((rec.get(k) or "").encode("utf-8"))
                    for k in ("published", "updated", "reviewed", "expire",
                              "title", "dept", "answer"))
@@ -802,6 +827,9 @@ def merge(recs, rec, events, htmls=None):
     raw = rec.pop("_html", None)
     if htmls is not None and raw:
         htmls[rec["sid"]] = raw
+    hits = rec.pop("_hits", None)
+    if hits is not None:
+        HITS[rec["sid"]] = hits
     old = recs.get(rec["sid"])
     # 空內容不覆蓋既有內容 —— 除了被擋，還有站方暫時抽掉內文的情況。
     # 寧可留舊的，也不要靜靜地把資料弄不見。
@@ -901,6 +929,7 @@ def main():
     started = time.localtime()
     recs = load_data()
     htmls = load_html()          # 原始 HTML，另外一份
+    HITS.update(load_hits())     # 點閱數，另外一份
     meta = load_meta()
     fe = Fetcher(a.rate_ms, a.method, a.abort_after)
     bench = bool(a.limit or a.d_from or a.d_to)
@@ -1133,6 +1162,8 @@ def main():
     if not a.dry_run:
         save_data(recs)
         save_html(htmls)
+        if HITS:
+            save_hits(HITS)
         # 跨條文找數字不一致，給「維護建議」用。算錯不能害整次抓取白做，所以包起來
         try:
             import conflicts

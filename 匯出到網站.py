@@ -98,6 +98,9 @@ def export_ms(out, old):
             hits[it[4]] = it[3]                       # sid → 點閱數
             cats[it[4]] = it[5]                       # sid → 分類
             short_tbl[old_idx["units"][it[1]]] = og["o"]   # 機關全名 → 簡稱
+    new_hits = C.load_hits()                          # 爬蟲抓到的最新點閱數蓋過去，沒有的才沿用舊的
+    hits.update(new_hits)
+    print(f"點閱數：爬蟲最新 {len(new_hits)} 筆")
     print(f"舊索引：{old_idx['n']} 筆、{len(old_idx['orgs'])} 個機關、"
           f"{len(cats)} 筆有分類")
 
@@ -162,6 +165,7 @@ def main():
     a.out = a.out or "_site_faq_out"
 
     hits, short_tbl = load_old(a.old)
+    hits.update({k[:8]: v for k, v in C.load_hits().items()})   # 爬蟲抓到的最新點閱數優先
     recs = C.load_data()
     live = [r for r in recs.values() if not r.get("gone")]
     # 熱門排在前面（跟原本的站一致）；沒有點閱數的照發布日期新到舊
