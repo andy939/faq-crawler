@@ -35,3 +35,9 @@ _site_faq_out/
 _site_faq_out/
 _site_ms_out/
 _repos/
+
+# 向量檔：本機算的，大且可重建，不進版本控制
+vectors/
+
+# GitHub 權杖：從來沒進過版本庫，加這行確保以後 git add -A 也不會誤收
+github_token.txt

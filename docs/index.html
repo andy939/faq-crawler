@@ -329,10 +329,17 @@ tr.cmp-row td{background:#fafbfc;padding:10px 12px}
 <section data-page="faq">
 <div class="card">
   <section id="tab-faq">
-    <div class="row" style="align-items:center;margin-bottom:12px">
-      <input id="q" type="search" placeholder="關鍵字"
-             style="flex:1;min-width:220px">
+    <!-- 第一排只留搜尋框跟查法：語意查詢是整句話，輸入框要夠寬。
+         年份、排序這些不常動的，移到第二排。 -->
+    <div class="row" style="align-items:center;margin-bottom:6px">
+      <input id="q" type="search" placeholder="關鍵字，或直接打一整句話"
+             style="flex:1;min-width:320px">
+      <select id="smode" title="查法"><option value="kw">關鍵字</option></select>
       <input type="hidden" id="dept">
+      <button class="ghost" id="csv">匯出 Excel</button>
+    </div>
+    <div class="row" style="align-items:center;margin-bottom:12px;
+                            font-size:12px;color:var(--dim)">
       <select id="year"><option value="">全部年份</option></select>
       <select id="sort">
         <option value="date-">發布日期新→舊</option>
@@ -342,7 +349,6 @@ tr.cmp-row td{background:#fafbfc;padding:10px 12px}
       </select>
       <label style="margin:0"><input type="checkbox" id="onlyfile"> 只看有附件</label>
       <label style="margin:0"><input type="checkbox" id="showgone"> 含已下架</label>
-      <button class="ghost" id="csv">匯出 Excel</button>
     </div>
     <div class="faqgrid">
       <aside class="orgs">
@@ -351,6 +357,7 @@ tr.cmp-row td{background:#fafbfc;padding:10px 12px}
         <div id="orglist"></div>
       </aside>
       <div class="results">
+        <div class="hint" id="semhint" hidden style="margin:0 0 6px"></div>
         <div class="hint" id="count" style="margin:0 0 10px"></div>
         <div id="listbox">
           <div id="list"></div>
@@ -648,6 +655,23 @@ function init(){
   const depts=[...new Set(ALL.map(r=>r.dept).filter(Boolean))]
     .sort((a,b)=>a.localeCompare(b,'zh-Hant'));
   // 機關的選取改由左邊「局處分類」那一欄負責，#dept 只是存選到哪個局處
+  // 先把 BM25 索引建好（八千多筆約 1.5 秒）。不做的話，第一個按下 BM25
+  // 的人要等一秒半，之後才變成 1 毫秒。
+  // 不用 requestIdleCallback —— 實測它在某些瀏覽器環境永遠不會被呼叫
+  // （分頁明明是可見的，等 2.5 秒仍未觸發），索引就永遠不會先建好。
+  // 單純延遲 1.5 秒，讓初次繪製先完成。
+  setTimeout(() => {
+    // 失敗就記在主控台，不要默默吞掉 —— 吞掉的話索引永遠建不起來
+    // 而且完全查不出原因（這個坑已經踩過一次）。
+    try{ bmBuild(); }catch(e){ console.warn('BM25 預建索引失敗：', e); }
+  }, 1500);
+  // BM25 不需要模型也不需要後端，所以 GitHub Pages 上也放得出來。
+  if(!$('#smode').querySelector('[value="bm25"]')){
+    const bm=document.createElement('option');
+    bm.value='bm25'; bm.textContent='BM25（不用模型）';
+    bm.title='中文字元 bigram 的 BM25，在你的瀏覽器裡算，不必連工作台。';
+    $('#smode').appendChild(bm);
+  }
   const years=[...new Set(ALL.map(r=>(r.published||'').slice(0,4)).filter(Boolean))]
     .sort().reverse();
   $('#year').innerHTML='<option value="">全部年份</option>'+
@@ -728,6 +752,111 @@ try{ if(localStorage.getItem('fold')) setFold(true); }catch(e){}
 
 // ---- 問答查詢 --------------------------------------------------------------
 let LIST=[];
+// 語意查詢的結果。rank 是 sid -> 名次（1 起算），有值就代表現在走語意，
+// 清單要照名次排、而且只留它找到的那些。null 代表回到關鍵字模式。
+const SEM = {key:'', rank:null, ms:0, tag:'', busy:false, err:''};
+
+async function semSearch(){
+  const mode=$('#smode').value, q=$('#q').value.trim();
+  const key=mode+' '+q;
+  if(mode==='kw' || !q){ SEM.rank=null; SEM.key=''; SEM.err=''; return false; }
+  if(key===SEM.key) return false;                 // 同一題不重打
+  SEM.busy=true; SEM.err=''; semHint();
+  try{
+    if(mode==='bm25'){
+      // 前端自己算。第一次要建索引（八千多筆，約 1~3 秒），之後每次零點幾毫秒。
+      if(!BM.idx){ SEM.err=''; semHint(); await new Promise(r=>setTimeout(r,0)); }
+      const t0=performance.now();
+      const sids=bmSearch(q, 50);
+      SEM.rank=new Map(sids.map((s,i)=>[s,i+1]));
+      SEM.ms=Math.round(performance.now()-t0); SEM.tag='bm25'; SEM.key=key;
+    }else{
+      const u=`${API_BASE}api/search?mode=semantic`
+            + `&tag=${encodeURIComponent(mode)}&k=50&q=${encodeURIComponent(q)}`;
+      const d=await (await fetch(u,{cache:'no-store'})).json();
+      if(!d.ok) throw new Error(d.msg||'查詢失敗');
+      SEM.rank=new Map(d.hits.map((h,i)=>[h.sid,i+1]));
+      SEM.ms=d.ms; SEM.tag=d.tag; SEM.key=key;
+    }
+  }catch(e){
+    SEM.rank=null; SEM.key=''; SEM.err=String(e.message||e);
+  }
+  SEM.busy=false; semHint();
+  return true;
+}
+
+function semHint(){
+  const el=$('#semhint'); if(!el) return;
+  if($('#smode').value==='kw'){ el.hidden=true; return; }
+  el.hidden=false;
+  el.innerHTML = SEM.busy
+      ? '語意查詢中…（第一次要載入模型，可能要等幾秒）'
+    : SEM.err ? `<span style="color:#c02626">語意查詢失敗：${esc(SEM.err)}</span>`
+    : SEM.rank ? `${$('#smode').value==='bm25' ? 'BM25'
+                      : '語意查詢 <b>'+esc(SEM.tag)+'</b>'}　${SEM.ms} ms　`
+                 + `依相關度排序前 ${SEM.rank.size} 筆（只找 FAQ，不生成答案）`
+    : ($('#smode').value==='bm25'
+         ? '輸入關鍵字或一句話都可以，例如「垃圾車 時間」'
+         : '輸入一句話，例如「我家附近的狗一直叫怎麼辦」');
+}
+
+// ---- BM25（純前端，不需要任何模型，GitHub Pages 上也能用）-----------------
+// 跟 檢索.py 的 bm25() 是同一套演算法與同一組參數，數字才對得起來：
+// 中文切字元 bigram、idf = ln(1+(N-n+0.5)/(n+0.5))、k1=1.5、b=0.75。
+//
+// 索引是每次開頁用當下的 faq.json 現建的，所以爬蟲每天更新完，
+// 使用者重新整理就是新的索引 —— 不需要另外同步，也不會過期。
+const BM = {idx:null, building:false};
+
+function bmTokens(s){
+  s = (s||'').toLowerCase();
+  const out = s.match(/[a-z0-9]+/g) || [];
+  for(const run of (s.match(/[\u4e00-\u9fff]+/g) || [])){
+    if(run.length === 1){ out.push(run); continue; }
+    for(let i=0; i<run.length-1; i++) out.push(run.slice(i, i+2));
+  }
+  return out;
+}
+const bmText = r => `${r.title||''}。${r.dept||''}。${r.answer||''}`;
+
+function bmBuild(){
+  if(BM.idx) return BM.idx;
+  const t0 = performance.now();
+  const inv = new Map(), dl = new Float32Array(ALL.length);
+  for(let i=0; i<ALL.length; i++){
+    const tf = new Map();
+    const toks = bmTokens(bmText(ALL[i]));
+    for(const w of toks) tf.set(w, (tf.get(w)||0) + 1);
+    dl[i] = toks.length;
+    for(const [w, f] of tf){
+      let p = inv.get(w); if(!p){ p = []; inv.set(w, p); }
+      p.push(i, f);                       // 攤平成 [doc, tf, doc, tf, ...] 省記憶體
+    }
+  }
+  let sum = 0; for(let i=0; i<dl.length; i++) sum += dl[i];
+  const N = ALL.length, idf = new Map();
+  for(const [w, p] of inv) idf.set(w, Math.log(1 + (N - p.length/2 + 0.5)/(p.length/2 + 0.5)));
+  BM.idx = {inv, idf, dl, avgdl: sum/N, N, ms: Math.round(performance.now()-t0)};
+  return BM.idx;
+}
+
+function bmSearch(q, k){
+  const ix = bmBuild(), K1 = 1.5, B = 0.75;
+  const sc = new Float32Array(ix.N);
+  for(const w of new Set(bmTokens(q))){
+    const p = ix.inv.get(w); if(!p) continue;
+    const iw = ix.idf.get(w);
+    for(let j=0; j<p.length; j+=2){
+      const i = p[j], f = p[j+1];
+      sc[i] += iw * f * (K1+1) / (f + K1*(1 - B + B*ix.dl[i]/ix.avgdl));
+    }
+  }
+  const out = [];
+  for(let i=0; i<ix.N; i++) if(sc[i] > 0) out.push([i, sc[i]]);
+  out.sort((a,b)=>b[1]-a[1]);
+  return out.slice(0, k).map(([i])=>ALL[i].sid);
+}
+
 function filtered(){
   const ts=terms(), dept=$('#dept').value,
         year=$('#year').value, onlyfile=$('#onlyfile').checked,
@@ -744,9 +873,12 @@ function filtered(){
     if(ex==='none' && r.expire) return false;
     if(ex==='stale'){ const d=(r.reviewed||'').slice(0,10);
       if(!(r.kind!=='external' && d && d<plus(-365))) return false; }
-    if(!hit(r, ts)) return false;
+    if(SEM.rank){ if(!SEM.rank.has(r.sid)) return false; }
+    else if(!hit(r, ts)) return false;
     return true;
   });
+  // 語意模式下，名次就是結果 —— 再照日期排會把最相關的那筆沖到後面去。
+  if(SEM.rank) return out.sort((a,b)=>SEM.rank.get(a.sid)-SEM.rank.get(b.sid));
   const s=$('#sort').value;
   out.sort(s==='title' ? (a,b)=>a.title.localeCompare(b.title,'zh-Hant')
     : s==='date+' ? (a,b)=>(a.published||'').localeCompare(b.published||'')
@@ -920,7 +1052,14 @@ document.addEventListener('keydown',e=>{
   if(e.key==='Escape' && PEEK!=null && !$('section[data-page="faq"]').hidden) unpeek();
 });
 let timer;
-$('#q').oninput=()=>{clearTimeout(timer);timer=setTimeout(()=>render(true),180);};
+$('#q').oninput=()=>{clearTimeout(timer);timer=setTimeout(async()=>{
+  if($('#smode').value!=='kw'){ render(true); await semSearch(); }
+  render(true);
+},180);};
+$('#smode').onchange=async()=>{
+  SEM.key=''; semHint(); render(true);
+  if($('#smode').value!=='kw'){ await semSearch(); render(true); }
+};
 $('#q').addEventListener('focus',()=>{delete $('#q').dataset.expire;});
 ['#year','#sort','#onlyfile','#showgone'].forEach(s=>
   $(s).onchange=()=>render(true));
@@ -1556,6 +1695,18 @@ async function local(){
   }
   if(!info) return;                              // 沒有工作台，就只當唯讀頁
   LOCAL_OK = true;
+  // 語意查詢只有本機工作台做得到（要跑模型），GitHub Pages 上這段不會執行，
+  // 下拉就只剩「關鍵字」，跟以前一樣。
+  try{
+    const v=await (await fetch(api('search'),{cache:'no-store'})).json();
+    for(const m of (v.vectors||[])){
+      const o=document.createElement('option');
+      o.value=m.tag;
+      o.textContent=`語意・${m.tag}`;
+      o.title=`${m.model}　${m.dim} 維　${m.count} 筆　建立於 ${m.built_at}`;
+      $('#smode').appendChild(o);
+    }
+  }catch(e){ /* 沒有向量就只有關鍵字可用 */ }
   $('#panel').hidden=false; $('#toolcard').hidden=false;
   $('#xls').hidden=false;
   $('#xls').onclick=async()=>{
