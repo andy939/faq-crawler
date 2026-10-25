@@ -119,6 +119,22 @@ a.btnlink{display:inline-block;padding:8px 18px;border:1px solid var(--line);
 a.btnlink:hover{filter:brightness(.93)}
 button.stop{background:var(--danger);color:#fff;border-color:transparent}
 button:disabled{opacity:.45;cursor:default;filter:none}
+/* 搜尋結果裡「字面符合」與「字詞相近」中間的分隔線 */
+.cut{margin:12px 2px 8px;padding-top:9px;border-top:1px dashed var(--line);
+     font-size:12px;color:var(--dim)}
+/* 查法：分段按鈕。選中的色塊會滑到新位置。 */
+.seg{position:relative;display:inline-flex;padding:3px;gap:0;flex:none;
+     background:#eef0f3;border:1px solid var(--line);border-radius:999px}
+.seg .thumb{position:absolute;top:3px;bottom:3px;left:0;width:0;border-radius:999px;
+            background:var(--accent);box-shadow:0 1px 3px rgba(10,127,127,.35);
+            transition:transform .22s cubic-bezier(.3,.8,.3,1),width .22s cubic-bezier(.3,.8,.3,1)}
+.seg .segb{position:relative;z-index:1;background:transparent;color:var(--dim);
+           border:0;border-radius:999px;padding:5px 14px;font-size:13px;
+           white-space:nowrap;transition:color .18s}
+.seg .segb:hover{filter:none;color:var(--ink)}
+.seg .segb[aria-checked="true"]{color:#fff;font-weight:600}
+.seg .segb:focus-visible{outline:2px solid var(--deep);outline-offset:1px}
+@media (prefers-reduced-motion:reduce){.seg .thumb,.seg .segb{transition:none}}
 .hint{color:var(--dim);font-size:12.5px;margin-top:9px;min-height:1.5em}
 .hint.err{color:var(--danger)}
 .stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(112px,1fr));
@@ -333,8 +349,11 @@ tr.cmp-row td{background:#fafbfc;padding:10px 12px}
          年份、排序這些不常動的，移到第二排。 -->
     <div class="row" style="align-items:center;margin-bottom:6px">
       <input id="q" type="search" placeholder="關鍵字，或直接打一整句話"
-             style="flex:1;min-width:320px">
-      <select id="smode" title="查法"><option value="kw">關鍵字</option></select>
+             style="flex:1;min-width:280px;max-width:680px">
+      <!-- 查法：select 藏起來當資料來源（其他程式碼都讀它的 value），
+           畫面上顯示的是下面這排分段按鈕，選項會自動跟著 select 長出來。 -->
+      <select id="smode" title="查法" hidden><option value="kw">關鍵字</option></select>
+      <div id="seg" class="seg" role="radiogroup" aria-label="查法"></div>
       <input type="hidden" id="dept">
       <button class="ghost" id="csv">匯出 Excel</button>
     </div>
@@ -342,8 +361,10 @@ tr.cmp-row td{background:#fafbfc;padding:10px 12px}
                             font-size:12px;color:var(--dim)">
       <select id="year"><option value="">全部年份</option></select>
       <select id="sort">
+        <option value="rel">相關度優先（沒輸入時依發布日期）</option>
         <option value="date-">發布日期新→舊</option>
         <option value="date+">發布日期舊→新</option>
+        <option value="hits">點閱數 多→少</option>
         <option value="exp+">下版日期近→遠</option>
         <option value="title">標題</option>
       </select>
@@ -626,16 +647,21 @@ const api = p => API_BASE + 'api/' + p;
 
 // ---- 載入 ------------------------------------------------------------------
 let ALL=[], META={}, RUNS=[], CHG=[], CONF={groups:[],bad_phones:[]}, shown=200;
+// sid -> 點閱數。爬蟲另存在 hits.json（每天都變，不放進 faq.json 免得每次 commit 全檔都改）。
+// 沒有這個檔也照常開，只是「點閱數」排序沒有資料可排。
+let HITS={};
 
 Promise.all([
   fetch(DATA_BASE+'faq.json').then(r=>r.json()),
+  fetch(DATA_BASE+'hits.json').then(r=>r.ok?r.json():{}).catch(()=>({})),
   fetch(DATA_BASE+'meta.json').then(r=>r.json()).catch(()=>({})),
   fetch(DATA_BASE+'runs.csv').then(r=>r.ok?r.text():'').catch(()=>''),
   fetch(DATA_BASE+'changes.csv').then(r=>r.ok?r.text():'').catch(()=>''),
   // 跨條文數字不一致（conflicts.py 算好的）。舊資料沒有這個檔也照常開
   fetch(DATA_BASE+'conflicts.json').then(r=>r.ok?r.json():null).catch(()=>null),
-]).then(([faq,meta,runsTxt,chgTxt,conf])=>{
+]).then(([faq,hits,meta,runsTxt,chgTxt,conf])=>{
   ALL=faq; META=meta; if(conf && conf.groups) CONF=conf;
+  if(hits && typeof hits==='object') HITS=hits;
   const a=parseCSV(runsTxt); RUNS={head:a.head, rows:a.rows.slice().reverse()};
   const b=parseCSV(chgTxt);  CHG=asObj(b.head,b.rows).reverse();
   $('#loading').hidden=true;
@@ -665,13 +691,7 @@ function init(){
     // 而且完全查不出原因（這個坑已經踩過一次）。
     try{ bmBuild(); }catch(e){ console.warn('BM25 預建索引失敗：', e); }
   }, 1500);
-  // BM25 不需要模型也不需要後端，所以 GitHub Pages 上也放得出來。
-  if(!$('#smode').querySelector('[value="bm25"]')){
-    const bm=document.createElement('option');
-    bm.value='bm25'; bm.textContent='BM25（不用模型）';
-    bm.title='中文字元 bigram 的 BM25，在你的瀏覽器裡算，不必連工作台。';
-    $('#smode').appendChild(bm);
-  }
+  // BM25 已經併進一般搜尋（關鍵字找不夠時自動補），不再另外放一顆按鈕。
   const years=[...new Set(ALL.map(r=>(r.published||'').slice(0,4)).filter(Boolean))]
     .sort().reverse();
   $('#year').innerHTML='<option value="">全部年份</option>'+
@@ -836,11 +856,14 @@ function bmBuild(){
   let sum = 0; for(let i=0; i<dl.length; i++) sum += dl[i];
   const N = ALL.length, idf = new Map();
   for(const [w, p] of inv) idf.set(w, Math.log(1 + (N - p.length/2 + 0.5)/(p.length/2 + 0.5)));
-  BM.idx = {inv, idf, dl, avgdl: sum/N, N, ms: Math.round(performance.now()-t0)};
+  const pos = new Map(ALL.map((r,i)=>[r.sid, i]));    // sid -> 在 ALL 裡的位置
+  BM.idx = {inv, idf, dl, avgdl: sum/N, N, pos, ms: Math.round(performance.now()-t0)};
   return BM.idx;
 }
 
-function bmSearch(q, k){
+// 每一筆的 BM25 分數（Float32Array，位置同 ALL）。整合搜尋要拿它排字面符合的那批，
+// 所以不能像 bmSearch 一樣只留前 k 名。
+function bmScore(q){
   const ix = bmBuild(), K1 = 1.5, B = 0.75;
   const sc = new Float32Array(ix.N);
   for(const w of new Set(bmTokens(q))){
@@ -851,6 +874,11 @@ function bmSearch(q, k){
       sc[i] += iw * f * (K1+1) / (f + K1*(1 - B + B*ix.dl[i]/ix.avgdl));
     }
   }
+  return sc;
+}
+
+function bmSearch(q, k){
+  const ix = bmBuild(), sc = bmScore(q);
   const out = [];
   for(let i=0; i<ix.N; i++) if(sc[i] > 0) out.push([i, sc[i]]);
   out.sort((a,b)=>b[1]-a[1]);
@@ -862,7 +890,7 @@ function filtered(){
         year=$('#year').value, onlyfile=$('#onlyfile').checked,
         gone=$('#showgone').checked, ex=$('#q').dataset.expire||'';
   const today=new Date().toISOString().slice(0,10);
-  let out=ALL.filter(r=>{
+  const base=ALL.filter(r=>{
     if(!gone && r.gone) return false;
     if(dept && !norm(r.dept).includes(norm(dept))) return false;
     if(year && !(r.published||'').startsWith(year)) return false;
@@ -873,19 +901,50 @@ function filtered(){
     if(ex==='none' && r.expire) return false;
     if(ex==='stale'){ const d=(r.reviewed||'').slice(0,10);
       if(!(r.kind!=='external' && d && d<plus(-365))) return false; }
-    if(SEM.rank){ if(!SEM.rank.has(r.sid)) return false; }
-    else if(!hit(r, ts)) return false;
+    if(SEM.rank && !SEM.rank.has(r.sid)) return false;
     return true;
   });
   // 語意模式下，名次就是結果 —— 再照日期排會把最相關的那筆沖到後面去。
-  if(SEM.rank) return out.sort((a,b)=>SEM.rank.get(a.sid)-SEM.rank.get(b.sid));
+  if(SEM.rank) return base.sort((a,b)=>SEM.rank.get(a.sid)-SEM.rank.get(b.sid));
+
+  // 一般搜尋 = 關鍵字 + BM25 合在一起：
+  //  1. 字面符合的（每個詞都出現）全部列出，不設上限，單一個字也行；
+  //  2. 不到 AUTO_FILL 筆，就用 BM25 補相近的（畫面上會有分隔線）；
+  //  3. 字面一筆都沒有，整份改依 BM25 相近度排序。
+  // 這樣「關鍵字找得到的」一筆都不會掉，BM25 只會多、不會少。
+  const auto = ts.length>0 && $('#smode').value==='kw';
+  let sc=null, pos=null;
+  if(auto){ sc=bmScore($('#q').value.trim()); pos=bmBuild().pos; }
+  const score = r => sc[pos.get(r.sid)];
+  const byDate = (a,b)=>(b.published||'').localeCompare(a.published||'');
   const s=$('#sort').value;
-  out.sort(s==='title' ? (a,b)=>a.title.localeCompare(b.title,'zh-Hant')
+  const cmp = s==='title' ? (a,b)=>a.title.localeCompare(b.title,'zh-Hant')
     : s==='date+' ? (a,b)=>(a.published||'').localeCompare(b.published||'')
+    // 點閱數一樣（含沒有資料的）就比發布日期，新的在前，結果才穩定
+    : s==='hits'  ? (a,b)=>((HITS[b.sid]||0)-(HITS[a.sid]||0)) || byDate(a,b)
     : s==='exp+'  ? (a,b)=>(a.expire||'9999').localeCompare(b.expire||'9999')
-    : (a,b)=>(b.published||'').localeCompare(a.published||''));
+    : s==='rel' && auto ? (a,b)=>(score(b)-score(a)) || byDate(a,b)   // 分數同（含單字查詢）比日期
+    : byDate;
+  if(!auto) return base.sort(cmp);
+
+  const exact = base.filter(r=>hit(r, ts)).sort(cmp);
+  const byScore = (a,b)=>score(b)-score(a);
+  let out = exact;
+  const info = {exact:exact.length, extra:0, fallback:false};
+  if(!exact.length){
+    out = base.filter(r=>score(r)>0).sort(byScore).slice(0, AUTO_FILL);
+    info.fallback = true;
+  }else if(exact.length < AUTO_FILL){
+    const have = new Set(exact.map(r=>r.sid));
+    const more = base.filter(r=>!have.has(r.sid) && score(r)>0)
+                     .sort(byScore).slice(0, AUTO_FILL-exact.length);
+    info.extra = more.length;
+    out = exact.concat(more);
+  }
+  out.info = info;                    // render() 靠它顯示「字面符合 N 筆，另補 M 筆相近」
   return out;
 }
+const AUTO_FILL = 50;
 // 關鍵字用空白分隔，每個詞都要出現（不限順序、不限位置）。
 // 因為常常不知道站上用的專有名詞 ——「生理 用品」要找得到「生理用品」，
 // 也要找得到標題寫「用品」而內文寫「生理」的那種。
@@ -994,10 +1053,18 @@ function render(reset){
   const ts=terms();
   const idx=PEEK!=null ? [PEEK]
     : LIST.slice(0,shown).map((_,i)=>i);
+  const info=LIST.info;               // 只有一般搜尋有輸入文字時才有
   $('#count').textContent=PEEK!=null
     ? '🔒 已鎖定這題，點標題、按「收合」或 Esc 回到清單'
-    : `符合 ${nf(LIST.length)} 筆`+(LIST.length>shown?`，顯示前 ${nf(shown)} 筆`:'');
-  $('#list').innerHTML=idx.map(i=>{const r=LIST[i], open=i===PEEK; return `
+    : (info ? (info.fallback
+          ? `沒有字面完全符合的，改依相近度排序，列出 ${nf(LIST.length)} 筆`
+          : `字面符合 ${nf(info.exact)} 筆`+(info.extra?`，另補 ${nf(info.extra)} 筆相近的`:''))
+        : `符合 ${nf(LIST.length)} 筆`)
+      +(LIST.length>shown?`，顯示前 ${nf(shown)} 筆`:'');
+  $('#list').innerHTML=idx.map(i=>{const r=LIST[i], open=i===PEEK;
+    const cut=(PEEK==null && info && info.extra && i===info.exact)
+      ? '<div class="cut">以下字面沒有完全符合，但字詞相近</div>' : '';
+    return `${cut}
     <div class="item${open?' open':''}" data-i="${i}">
       <h3>${hl(r.title,ts)}</h3>
       <div class="meta2">
@@ -1005,6 +1072,7 @@ function render(reset){
         <span>發布 ${esc((r.published||'').slice(0,10)||'—')}</span>
         ${r.updated?`<span title="${esc(r.updated)}">更新 ${
           esc(r.updated.slice(0,10))}</span>`:''}
+        ${HITS[r.sid]!=null?`<span title="官網顯示的點閱數">點閱 ${nf(HITS[r.sid])}</span>`:''}
         ${r.files&&r.files.length?`<span class="badge">附件 ${r.files.length}</span>`:''}
         ${r.kind==='external'?'<span class="badge">外部連結</span>':''}
         ${r.gone?`<span class="badge gone">已下架 ${esc(r.gone)}</span>`:''}
@@ -1057,9 +1125,55 @@ $('#q').oninput=()=>{clearTimeout(timer);timer=setTimeout(async()=>{
   render(true);
 },180);};
 $('#smode').onchange=async()=>{
-  SEM.key=''; semHint(); render(true);
+  SEM.key='';
+  // 回到關鍵字：上一次 BM25／語意留下的名次表一定要清掉。filtered() 只要看到
+  // SEM.rank 就照它列、不再比對關鍵字，沒清的話清單會一直停在上一個查法的結果。
+  if($('#smode').value==='kw'){ SEM.rank=null; SEM.err=''; }
+  semHint(); render(true);
   if($('#smode').value!=='kw'){ await semSearch(); render(true); }
 };
+// 查法按鈕列：照 #smode 的選項畫出來；點一下就改 select 的值並走原本的 onchange。
+(function(){
+  const sel=$('#smode'), box=$('#seg');
+  const LABEL={
+    'kw':['搜尋','字面符合的全部列出；不夠再補字詞相近的。打關鍵字或整句話都可以'],
+    'e5-small':['語意·快','意思相近就找得到，速度快'],
+    'e5-large':['語意·準','意思相近就找得到，準確度最高']};
+  function mark(){
+    const on=box.querySelector('[aria-checked="true"]'), th=box.querySelector('.thumb');
+    if(!on||!th||!on.offsetWidth) return;       // 分頁還藏著時量不到，等 ResizeObserver 再來
+    const a=on.getBoundingClientRect(), b=box.getBoundingClientRect();
+    th.style.width=a.width+'px';                // 用小數座標，offsetWidth 會四捨五入
+    th.style.transform=`translateX(${a.left-b.left-box.clientLeft}px)`;
+  }
+  function paint(){
+    box.innerHTML='<i class="thumb"></i>';
+    // 固定順序：GitHub 上只有「語意·快」，本機才多出「語意·準」，
+    // 一定會有的 快 排前面、準 接在最後，有沒有 準 前面的按鈕位置都不變。
+    // （後端回傳是依檔名排，e5-large 會排在 e5-small 前面，所以這裡要自己排。）
+    const ORDER=['kw','bm25','e5-small','e5-large'];
+    const rank=v=>{const i=ORDER.indexOf(v); return i<0 ? ORDER.length : i;};
+    for(const o of [...sel.options].sort((x,y)=>rank(x.value)-rank(y.value))){
+      const b=document.createElement('button'), L=LABEL[o.value];
+      b.type='button'; b.className='segb'; b.setAttribute('role','radio');
+      b.setAttribute('aria-checked', String(o.value===sel.value));
+      b.textContent=L?L[0]:o.textContent;
+      b.title=(L?L[1]:'')+(o.title?`\n${o.title}`:'');
+      b.onclick=()=>{
+        if(sel.value===o.value) return;
+        sel.value=o.value;
+        box.querySelectorAll('.segb').forEach(x=>
+          x.setAttribute('aria-checked', String(x===b)));
+        mark(); sel.onchange();
+      };
+      box.appendChild(b);
+    }
+    mark();
+  }
+  new MutationObserver(paint).observe(sel,{childList:true});
+  new ResizeObserver(mark).observe(box);
+  paint();
+})();
 $('#q').addEventListener('focus',()=>{delete $('#q').dataset.expire;});
 ['#year','#sort','#onlyfile','#showgone'].forEach(s=>
   $(s).onchange=()=>render(true));
