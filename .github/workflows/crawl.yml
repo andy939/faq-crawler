@@ -103,6 +103,35 @@ jobs:
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
 
+      # 爬完就把向量重算，跟 faq.json 一起 commit。不做的話向量會停在舊資料，
+      # 網頁比對語料指紋發現對不上，就會把「語意·快」灰掉。
+      # 只算 e5-small：向量 3.2 MB、瀏覽器要下載的模型約 113 MB，載得動；
+      # e5-large 的模型 2.1 GB，公開頁不可能用，留在本機自己算。
+      # 向量照 sid 排序存成 int8，每天 git 只多約 3 MB 以內。
+      #
+      # continue-on-error 很重要：這一步失敗時，後面的「存檔」一定要照樣跑，
+      # 否則前面爬了一個半小時的 faq.json 會整個丟掉。失敗的話 docs/vectors/ 不會被
+      # 覆蓋（cp 在算完之後才做），舊向量留著，網頁端指紋對不上就自動停用語意查詢。
+      # 「只同步（不抓）」那個模式沒有新資料，不用重算。
+      - name: 快取語意模型
+        if: steps.run.outputs.code == '0' && steps.run.outputs.skip != '1' && steps.run.outputs.force != '1'
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/huggingface
+          key: hf-multilingual-e5-small-v1
+
+      - name: 重算向量
+        if: steps.run.outputs.code == '0' && steps.run.outputs.skip != '1' && steps.run.outputs.force != '1'
+        continue-on-error: true
+        run: |
+          # CPU 版的 torch 先裝（預設會抓 GPU 版，約 2 GB，這裡用不到）
+          pip install --quiet torch --index-url https://download.pytorch.org/whl/cpu
+          pip install --quiet "sentence-transformers>=3" numpy
+          python 建立向量.py --model intfloat/multilingual-e5-small --tag e5-small
+          mkdir -p docs/vectors
+          cp vectors/e5-small.bin  docs/vectors/
+          cp vectors/e5-small.json docs/vectors/
+
       - name: 存檔
         run: |
           git config user.name  'github-actions[bot]'
