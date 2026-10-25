@@ -132,6 +132,8 @@ button:disabled{opacity:.45;cursor:default;filter:none}
            border:0;border-radius:999px;padding:5px 14px;font-size:13px;
            white-space:nowrap;transition:color .18s}
 .seg .segb:hover{filter:none;color:var(--ink)}
+.seg .segb:disabled{opacity:.45;cursor:not-allowed}
+.seg .segb:disabled:hover{color:var(--dim)}
 .seg .segb[aria-checked="true"]{color:#fff;font-weight:600}
 .seg .segb:focus-visible{outline:2px solid var(--deep);outline-offset:1px}
 @media (prefers-reduced-motion:reduce){.seg .thumb,.seg .segb{transition:none}}
@@ -790,6 +792,12 @@ async function semSearch(){
       const sids=bmSearch(q, 50);
       SEM.rank=new Map(sids.map((s,i)=>[s,i+1]));
       SEM.ms=Math.round(performance.now()-t0); SEM.tag='bm25'; SEM.key=key;
+    }else if(mode==='e5-small' && !LOCAL_OK){
+      // 沒有本機工作台：模型下載後在瀏覽器裡算
+      const t0=performance.now();
+      const sids=await webSemantic(q, 50);
+      SEM.rank=new Map(sids.map((s,i)=>[s,i+1]));
+      SEM.ms=Math.round(performance.now()-t0); SEM.tag='e5-small'; SEM.key=key;
     }else{
       const u=`${API_BASE}api/search?mode=semantic`
             + `&tag=${encodeURIComponent(mode)}&k=50&q=${encodeURIComponent(q)}`;
@@ -809,8 +817,13 @@ function semHint(){
   const el=$('#semhint'); if(!el) return;
   if($('#smode').value==='kw'){ el.hidden=true; return; }
   el.hidden=false;
+  const web = $('#smode').value==='e5-small' && !LOCAL_OK;     // 瀏覽器自己算的那條
   el.innerHTML = SEM.busy
-      ? '語意查詢中…（第一次要載入模型，可能要等幾秒）'
+      ? (web && !WEB.ext
+          ? (WEB.pct>0 && WEB.pct<100
+              ? `下載語意模型 ${WEB.pct}%…（約 113 MB，只有第一次要，之後存在瀏覽器裡）`
+              : '載入語意模型中…（第一次要幾秒）')
+          : '語意查詢中…（第一次要載入模型，可能要等幾秒）')
     : SEM.err ? `<span style="color:#c02626">語意查詢失敗：${esc(SEM.err)}</span>`
     : SEM.rank ? `${$('#smode').value==='bm25' ? 'BM25'
                       : '語意查詢 <b>'+esc(SEM.tag)+'</b>'}　${SEM.ms} ms　`
@@ -885,6 +898,105 @@ function bmSearch(q, k){
   return out.slice(0, k).map(([i])=>ALL[i].sid);
 }
 
+// ---- 語意查詢：瀏覽器自己算（沒有本機工作台時走這條）--------------------------
+// 模型（e5-small 的 ONNX int8，約 113 MB）第一次用才從 Hugging Face 下載，之後存在瀏覽器裡；
+// 文件向量是爬蟲每天重算、放在 docs/vectors/ 的 int8 檔（約 3 MB）。
+// 有本機工作台就改走工作台（float32、還有 large），見 semSearch。
+// 必須跟 建立向量.py / 檢索.py 的做法一模一樣，寫錯不會報錯、只會默默掉分：
+//   查詢前綴 "query: "、mean pooling、L2 正規化、向量 int8 要除以 127 還原。
+const WEB = {
+  repo: 'Xenova/multilingual-e5-small',
+  rev:  '761b726dd34fb83930e26aab4e9ac3899aa1fa78',  // 鎖版本，上游改檔不會影響這裡
+  meta:null, D:null, ext:null, loading:null, pct:0, fp:null,
+};
+
+// 這份語料的指紋，要跟 檢索.py 的 fingerprint() 算出同一串：
+// 依 sid 排序，每筆取 [sid, title, dept, answer]，用 Python 的 json.dumps 格式
+// （逗號後有一個空格）串起來，整串做 SHA-256，取前 16 個字元。
+async function faqFingerprint(){
+  const rows=[...ALL].sort((a,b)=>a.sid<b.sid?-1:a.sid>b.sid?1:0);
+  const s=rows.map(x=>'['+[x.sid,x.title||'',x.dept||'',x.answer||'']
+    .map(v=>JSON.stringify(v)).join(', ')+']').join('');
+  const h=await crypto.subtle.digest('SHA-256', new TextEncoder().encode(s));
+  return [...new Uint8Array(h)].map(b=>b.toString(16).padStart(2,'0')).join('').slice(0,16);
+}
+
+async function webSemInit(){
+  try{
+    const r=await fetch(DATA_BASE+'vectors/e5-small.json',{cache:'no-cache'});
+    if(!r.ok) return;                         // 這個站沒放向量檔，就不開語意查詢
+    WEB.meta=await r.json();
+  }catch(e){ return; }
+  const o=document.createElement('option');
+  o.value='e5-small'; o.textContent='語意・e5-small';
+  o.title=`${WEB.repo}　${WEB.meta.dim} 維　${WEB.meta.count} 筆　向量建立於 ${WEB.meta.built_at}`;
+  $('#smode').appendChild(o);
+  // 指紋對不上 = 向量比資料舊（爬蟲更新了、向量還沒重算），按鈕灰掉，免得查出舊的結果。
+  // 算不出指紋（不是 https）也一樣灰掉，寧可不給，不給舊結果。
+  try{
+    WEB.fp=await faqFingerprint();
+    if(WEB.fp!==WEB.meta.faq_fingerprint){
+      o.disabled=true;
+      o.title=`向量比資料舊（向量建立於 ${WEB.meta.built_at}，之後資料又更新了），暫時不能用，等下次重算。`;
+    }
+  }catch(e){
+    console.warn('語意查詢：算不出語料指紋', e);
+    o.disabled=true; o.title='無法確認向量是否為最新，暫時不能用。';
+  }
+}
+
+async function webVectors(){
+  if(WEB.D) return;
+  const m=WEB.meta, n=m.sids.length, d=m.dim;
+  const r=await fetch(DATA_BASE+'vectors/e5-small.bin',{cache:'no-cache'});
+  if(!r.ok) throw new Error('向量檔下載失敗');
+  const q8=new Int8Array(await r.arrayBuffer());
+  if(q8.length!==n*d) throw new Error('向量檔大小與說明檔不符');
+  const D=new Float32Array(n*d);
+  for(let i=0;i<n;i++){                       // 除以 127 還原成浮點數，再逐筆 L2 正規化
+    let s=0;
+    for(let j=0;j<d;j++){ const v=q8[i*d+j]/127; D[i*d+j]=v; s+=v*v; }
+    const k=1/Math.sqrt(s||1);
+    for(let j=0;j<d;j++) D[i*d+j]*=k;
+  }
+  WEB.D=D;
+}
+
+// 載入函式庫與模型，只做一次（同時好幾個查詢進來也共用同一個）
+function webLoad(){
+  return WEB.loading ||= (async()=>{
+    const T=await import('./vendor/transformers.min.js');
+    T.env.allowLocalModels=false;
+    T.env.useBrowserCache=true;
+    // 引擎檔案自己提供，不去 jsdelivr 拿
+    T.env.backends.onnx.wasm.wasmPaths=new URL('./vendor/', location.href).href;
+    // GitHub Pages 設不了跨來源隔離，多執行緒用不了
+    T.env.backends.onnx.wasm.numThreads=1;
+    const files={};
+    const ext=await T.pipeline('feature-extraction', WEB.repo, {
+      dtype:'q8', revision:WEB.rev,
+      progress_callback:p=>{
+        // 只追模型本體（約 113 MB）。設定檔、分詞器（約 16 MB）那些先下載完的檔
+        // 算進去的話，進度會先衝到 100%、模型開始下載時又掉回去。
+        if(p.status!=='progress' || !(p.total>5e7)) return;
+        files[p.file]=[p.loaded,p.total];
+        let L=0,N=0; for(const [l,n] of Object.values(files)){ L+=l; N+=n; }
+        WEB.pct=Math.round(L/N*100); semHint();
+      }});
+    WEB.ext=ext; return ext;
+  })().catch(e=>{ WEB.loading=null; throw e; });
+}
+
+async function webSemantic(q, k){
+  if(WEB.fp!==WEB.meta.faq_fingerprint) throw new Error('向量比資料舊，暫時不能用語意查詢');
+  await webVectors();
+  const ext=await webLoad();
+  const v=(await ext('query: '+q, {pooling:'mean', normalize:true})).data;   // Float32Array(384)
+  const D=WEB.D, d=WEB.meta.dim, n=WEB.meta.sids.length, sc=new Float32Array(n);
+  for(let i=0;i<n;i++){ let s=0; const o=i*d; for(let j=0;j<d;j++) s+=D[o+j]*v[j]; sc[i]=s; }
+  return [...sc.keys()].sort((a,b)=>sc[b]-sc[a]).slice(0,k).map(i=>WEB.meta.sids[i]);
+}
+
 function filtered(){
   const ts=terms(), dept=$('#dept').value,
         year=$('#year').value, onlyfile=$('#onlyfile').checked,
@@ -912,7 +1024,8 @@ function filtered(){
   //  2. 不到 AUTO_FILL 筆，就用 BM25 補相近的（畫面上會有分隔線）；
   //  3. 字面一筆都沒有，整份改依 BM25 相近度排序。
   // 這樣「關鍵字找得到的」一筆都不會掉，BM25 只會多、不會少。
-  const auto = ts.length>0 && $('#smode').value==='kw';
+  // 語意查詢還沒回來、或失敗時（SEM.rank 是空的），也走這條：先給一般搜尋的結果，不會是空白。
+  const auto = ts.length>0;
   let sc=null, pos=null;
   if(auto){ sc=bmScore($('#q').value.trim()); pos=bmBuild().pos; }
   const score = r => sc[pos.get(r.sid)];
@@ -1158,7 +1271,8 @@ $('#smode').onchange=async()=>{
       b.type='button'; b.className='segb'; b.setAttribute('role','radio');
       b.setAttribute('aria-checked', String(o.value===sel.value));
       b.textContent=L?L[0]:o.textContent;
-      b.title=(L?L[1]:'')+(o.title?`\n${o.title}`:'');
+      b.disabled=o.disabled;            // 向量不是最新時，這顆會灰掉，原因寫在提示裡
+      b.title=o.disabled ? o.title : (L?L[1]:'')+(o.title?`\n${o.title}`:'');
       b.onclick=()=>{
         if(sel.value===o.value) return;
         sel.value=o.value;
@@ -1170,7 +1284,9 @@ $('#smode').onchange=async()=>{
     }
     mark();
   }
-  new MutationObserver(paint).observe(sel,{childList:true});
+  // 選項增減、或某顆被設成 disabled／換提示時，按鈕列都要跟著重畫
+  new MutationObserver(paint).observe(sel,{childList:true, subtree:true,
+    attributes:true, attributeFilter:['disabled','title']});
   new ResizeObserver(mark).observe(box);
   paint();
 })();
@@ -1807,7 +1923,7 @@ async function local(){
       break;
     }catch(e){ /* 這個來源沒有工作台，換下一個 */ }
   }
-  if(!info) return;                              // 沒有工作台，就只當唯讀頁
+  if(!info){ webSemInit(); return; }             // 沒有工作台：唯讀頁，語意查詢改在瀏覽器自己算
   LOCAL_OK = true;
   // 語意查詢只有本機工作台做得到（要跑模型），GitHub Pages 上這段不會執行，
   // 下拉就只剩「關鍵字」，跟以前一樣。
