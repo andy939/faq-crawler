@@ -2,7 +2,8 @@
 """
 本機工作台 —— 把 docs/ 這個網頁跑起來，並且讓網頁上的按鈕可以真的去抓資料。
 
-    python 工作台.py          # 開 http://127.0.0.1:8765
+    python 工作台.py          # 開 http://127.0.0.1:8765，只有這台電腦能用
+    python 工作台.py --lan    # 家裡區網的其他電腦也能連（區網以外一律擋掉）
 
 跟 GitHub Pages 上那頁是同一個 index.html。差別只在：
 放在 GitHub 上是唯讀的監控頁（靜態網頁沒有後端，按不動），
@@ -13,8 +14,11 @@
 或 GitHub Actions 上跑的完全一樣，不會有第二套邏輯。
 """
 
+import argparse
+import ipaddress
 import json
 import os
+import socket
 import subprocess
 import sys
 import threading
@@ -27,7 +31,58 @@ import crawl as C
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 DOCS = os.path.join(HERE, "docs")
+VEC = os.path.join(HERE, "vectors")
 PORT = 8765
+
+# 檢索索引常駐在記憶體裡。BM25 索引建一次要一秒多、語意模型要載入好幾秒，
+# 每次查詢重建的話打一個字就卡住。第一次用到才建（import 檢索 會把 numpy
+# 拉進來，放在啟動時做會讓工作台變慢）。
+_IX = None
+_IX_LOCK = threading.Lock()
+
+
+def index():
+    global _IX
+    with _IX_LOCK:
+        if _IX is None:
+            import 檢索
+            _IX = 檢索.Index()
+        return _IX
+
+
+def warm_up():
+    """背景把索引和第一個語意模型載好。不做的話，使用者第一次查詢要等
+    三十幾秒（載模型），之後才變成幾十毫秒 —— 那三十秒全砸在第一個人身上。
+    開在背景執行緒，工作台本身照常馬上可以用。"""
+    def go():
+        try:
+            ix = index()
+            ix.bm25("預熱", k=1)
+            tags = vector_tags()
+            if tags:
+                t0 = time.perf_counter()
+                ix.semantic("預熱", tags[0]["tag"], k=1)
+                print(f"語意查詢就緒：{tags[0]['tag']}"
+                      f"（{time.perf_counter() - t0:.0f} 秒）")
+        except Exception as e:
+            print(f"語意查詢無法使用：{type(e).__name__}: {e}")
+    threading.Thread(target=go, daemon=True).start()
+
+
+def vector_tags():
+    """算好的向量有哪些。沒有 vectors/ 資料夾就是還沒算過。"""
+    if not os.path.isdir(VEC):
+        return []
+    out = []
+    for f in sorted(os.listdir(VEC)):
+        # .state.json 是逐筆記錄（增量重算與放寬保護用），不是一組向量的說明檔
+        if f.endswith(".json") and not f.endswith(".state.json"):
+            try:
+                out.append(json.load(open(os.path.join(VEC, f),
+                                          encoding="utf-8")))
+            except Exception:
+                pass
+    return out
 
 # 網頁上那排工具按鈕。key 是網頁送來的名字，值是要跑的命令列。
 TOOLS = {
@@ -285,11 +340,57 @@ class Handler(SimpleHTTPRequestHandler):
             # 量測值，不是問答本身的屬性，所以沒進 faq.json）。
             # 網頁那張逐筆表要顯示它，就從最近的測量檔撈出來，新的蓋舊的。
             return self._json({"wire": latest_wire()})
+        if path == "/api/search":
+            # 語意查詢。只排序、不生成答案 —— 回去的是 faq.json 裡的原文那幾筆。
+            # 沒帶 q 就只回「有哪些模型可以選」，網頁用它決定要不要顯示那個選單。
+            tags = vector_tags()
+            kw = (q.get("q") or [""])[0].strip()
+            if not kw:
+                return self._json({"ok": True, "vectors": tags})
+            mode = (q.get("mode") or ["bm25"])[0]
+            tag = (q.get("tag") or [""])[0] or (tags[0]["tag"] if tags else "")
+            k = max(1, min(int((q.get("k") or ["50"])[0] or 50), 200))
+            t0 = time.perf_counter()
+            try:
+                rows = index().search(kw, mode=mode, tag=tag, k=k)
+            except Exception as e:
+                return self._json({"ok": False,
+                                   "msg": f"{type(e).__name__}: {e}"}, 500)
+            out = {
+                "ok": True, "mode": mode, "tag": tag,
+                "ms": round((time.perf_counter() - t0) * 1000),
+                "hits": [{"sid": r["sid"], "score": r["_score"]} for r in rows],
+            }
+            # 向量比資料舊但在容許範圍內（只警告、照常查詢）時，把各幾筆告訴網頁，
+            # 讓使用者看得到，而不是只有終端機有一行字。
+            if mode in ("semantic", "hybrid"):
+                st = index().vector_info(tag)
+                if not st["exact"]:
+                    out["stale"] = st
+            return self._json(out)
         return super().do_GET()
+
+    def _origin_ok(self):
+        """POST 會真的做事（開始抓取、停止、寫檔），只收自己人送來的。
+        瀏覽器對「別的網站」送來的簡單 POST 照樣會送到，只是看不到回應 ——
+        所以光靠 CORS 擋不住，要在這裡看 Origin。沒有 Origin 的是命令列工具，放行。"""
+        origin = self.headers.get("Origin")
+        if not origin or origin in self.ALLOW_ORIGINS:
+            return True
+        # 區網其他電腦用 http://192.168.x.x:8765 打開的網頁，Origin 就是它自己。
+        # Host 要是 IP 才算：用網域名稱指到區網位址（DNS rebinding）的不算。
+        host = (self.headers.get("Host") or "").rsplit(":", 1)[0]
+        try:
+            ipaddress.ip_address(host)
+        except ValueError:
+            return False
+        return origin == f"http://{self.headers.get('Host')}"
 
     def do_POST(self):
         path, _, qs = self.path.partition("?")
         q = urllib.parse.parse_qs(qs)
+        if not self._origin_ok():
+            return self._json({"ok": False, "msg": "來源不被允許"}, 403)
         if path == "/api/xlsx":
             # 網頁把「目前畫面上篩出來的那些列」送過來，這裡寫成 xlsx。
             # 瀏覽器自己做不出真正的 Excel 檔（要額外的函式庫），但後端
@@ -355,11 +456,54 @@ class Handler(SimpleHTTPRequestHandler):
         pass                                # 不要把每個請求都印出來洗版
 
 
+class LanServer(ThreadingHTTPServer):
+    """區網模式：聽所有網路卡，但只接「跟這台同一個網段」來的連線。
+    這台是 192.168.1.33，就只收 192.168.1.x（前三段一樣），外加本機 127.x；
+    其他一律在連線時就斷掉，連網頁都看不到。
+    路由器沒有做連接埠轉送的話，外面本來也連不進來，這是第二道。"""
+
+    def __init__(self, addr, handler, net):
+        self.net = net
+        super().__init__(addr, handler)
+
+    def verify_request(self, request, client_address):
+        try:
+            ip = ipaddress.ip_address(client_address[0])
+        except ValueError:
+            return False
+        return ip.is_loopback or ip in self.net
+
+
+def lan_ip():
+    """這台電腦在區網裡的位址。連一下外面的位址（UDP 不會真的送出封包）
+    看系統選哪張網卡，比 gethostbyname 準 —— 那個常拿到虛擬網卡的位址。"""
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+            s.connect(("8.8.8.8", 80))
+            return s.getsockname()[0]
+    except OSError:
+        return socket.gethostbyname(socket.gethostname())
+
+
 def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--lan", action="store_true",
+                    help="讓同一個區網的其他電腦也能連（區網以外一律擋掉）")
+    a = ap.parse_args()
     if not os.path.exists(os.path.join(DOCS, "index.html")):
         sys.exit(f"找不到 {DOCS}\\index.html")
-    srv = ThreadingHTTPServer(("127.0.0.1", PORT), Handler)
     url = f"http://127.0.0.1:{PORT}"
+    if a.lan:
+        ip = lan_ip()
+        net = ipaddress.ip_network(f"{ip}/24", strict=False)   # 前三段一樣的
+        srv = LanServer(("0.0.0.0", PORT), Handler, net)
+        print("【區網模式】同一個網路的其他電腦，用瀏覽器打開：")
+        print(f"\n        http://{ip}:{PORT}\n")
+        print(f"只接受 {str(net.network_address).rsplit('.', 1)[0]}.x 來的連線，其他一律擋掉。")
+        print("第一次啟動時 Windows 會問要不要允許，請只勾「私人網路」。\n")
+    else:
+        srv = ThreadingHTTPServer(("127.0.0.1", PORT), Handler)
+    warm_up()
     print(f"本機工作台：{url}")
     print("網頁上的控制台可以直接按下去抓資料，也可以中途停止。")
     print("關掉這個視窗（或按 Ctrl-C）就停止。\n")
