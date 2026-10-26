@@ -119,6 +119,30 @@ a.btnlink{display:inline-block;padding:8px 18px;border:1px solid var(--line);
 a.btnlink:hover{filter:brightness(.93)}
 button.stop{background:var(--danger);color:#fff;border-color:transparent}
 button:disabled{opacity:.45;cursor:default;filter:none}
+/* 異動管理 */
+.acard{border:1px solid var(--line);border-radius:10px;padding:11px 14px;margin-bottom:9px;background:#fff}
+.acard h3{margin:0 0 4px;font-size:15px;line-height:1.5}
+.acard .meta2{display:flex;flex-wrap:wrap;gap:4px 14px;font-size:12px;color:var(--dim)}
+.tag{display:inline-block;font-size:11.5px;padding:1px 8px;border-radius:999px;margin-right:6px;
+     font-weight:400;vertical-align:middle;border:1px solid var(--line);background:#f3f5f8;color:var(--dim)}
+.tag.chg{background:#fff4e5;border-color:#f3d6a8;color:#a8541c}
+.tag.gone{background:#fdecea;border-color:#f3b9b2;color:#c0392b}
+.tag.add{background:#e6f7f7;border-color:#a8dede;color:var(--deep)}
+.bn{margin:8px 0 2px;padding:7px 11px;border-radius:8px;font-size:13px;line-height:1.6}
+.bn.ok{background:#eaf7ee;border:1px solid #bfe3c8;color:#1d6b35}
+.bn.warn{background:#fff4e5;border:1px solid #f3d6a8;color:#8a4a12}
+.bn.unk{background:#eef2f7;border:1px solid #cfd8e3;color:#3a4a5e}
+.ver{border-left:3px solid var(--line);margin:10px 0 0 2px;padding:2px 0 2px 12px}
+.ver.cur{border-left-color:var(--accent)}
+.ver.hit{background:#fffbe6}
+.ver h4{margin:0 0 3px;font-size:13px;color:var(--dim);font-weight:600}
+.ver .vt{font-weight:600;margin:2px 0}
+.ver .vb{white-space:pre-wrap;word-break:break-word;font-size:13.5px;line-height:1.7;
+         max-height:260px;overflow:auto;background:#fafbfc;border-radius:6px;padding:6px 9px}
+.ver .vb.diff{background:#fff}
+ins.df-ins{background:#d6f5dd;text-decoration:none;color:#14562b}
+del.df-del{background:#fbd9d5;color:#8e2418}
+.acard .row button{padding:3px 11px;font-size:12.5px}
 /* 搜尋結果裡「字面符合」與「字詞相近」中間的分隔線 */
 .cut{margin:12px 2px 8px;padding-top:9px;border-top:1px dashed var(--line);
      font-size:12px;color:var(--dim)}
@@ -264,6 +288,7 @@ tr.cmp-row td{background:#fafbfc;padding:10px 12px}
   <button data-page="stat"><i>📊</i><span>資料概況</span></button>
   <button data-page="fix"><i>🛠</i><span>維護建議</span></button>
   <button data-page="chg"><i>🔄</i><span>異動紀錄</span></button>
+  <button data-page="arch"><i>🗄</i><span>異動管理</span></button>
   <button data-page="crawl"><i>🕷</i><span>爬蟲工具</span></button>
   <button data-page="runs"><i>⏱</i><span>執行紀錄</span></button>
   <div class="sidenote" id="loading">載入資料中…</div>
@@ -550,6 +575,30 @@ tr.cmp-row td{background:#fafbfc;padding:10px 12px}
 </div>
 </section>
 
+<!-- 異動管理＝過期資料庫：被改掉的舊版、下架的問答，標題與內容都留著 -->
+<section data-page="arch" hidden>
+<div class="card">
+  <section id="tab-arch">
+    <div class="hint" style="margin:0 0 10px" id="arch-intro">載入中…</div>
+    <div class="row" style="align-items:center;margin-bottom:8px">
+      <input id="aq" type="search" placeholder="搜尋標題或內容（新舊版本都會找）"
+             style="flex:1;min-width:240px;max-width:560px">
+      <select id="atype">
+        <option value="">全部（改過、下架、新增）</option>
+        <option value="chg">內容改過</option>
+        <option value="gone">已下架</option>
+        <option value="add">新增</option>
+      </select>
+      <label style="margin:0">回答日期 <input id="adate" type="date"></label>
+      <label style="margin:0"><input type="checkbox" id="adiff"> 只列出之後有變動的</label>
+    </div>
+    <div class="hint" id="acount" style="margin:0 0 8px"></div>
+    <div id="alist"></div>
+    <button class="ghost" id="amore" hidden style="margin-top:10px">顯示更多</button>
+  </section>
+</div>
+</section>
+
 </main>
 </div>
 
@@ -652,18 +701,27 @@ let ALL=[], META={}, RUNS=[], CHG=[], CONF={groups:[],bad_phones:[]}, shown=200;
 // sid -> 點閱數。爬蟲另存在 hits.json（每天都變，不放進 faq.json 免得每次 commit 全檔都改）。
 // 沒有這個檔也照常開，只是「點閱數」排序沒有資料可排。
 let HITS={};
+// 過期資料庫與流水號（SERIAL：sid -> 第幾號）。流水號編了就不再變，下架的號碼也不會被重用
+let HIST=null, ARCH=null; const SERIAL=new Map();
+const SERIAL_DIGITS=7;
+const fmtNo=n=>n?String(n).padStart(SERIAL_DIGITS,'0'):'';
+const noOf=sid=>SERIAL.get(sid)||0;
 
 Promise.all([
   fetch(DATA_BASE+'faq.json').then(r=>r.json()),
   fetch(DATA_BASE+'hits.json').then(r=>r.ok?r.json():{}).catch(()=>({})),
+  // 過期資料庫（歷史.py 每天記的舊版與下架）。沒有這個檔，「異動管理」就只顯示說明
+  fetch(DATA_BASE+'history.json').then(r=>r.ok?r.json():null).catch(()=>null),
   fetch(DATA_BASE+'meta.json').then(r=>r.json()).catch(()=>({})),
   fetch(DATA_BASE+'runs.csv').then(r=>r.ok?r.text():'').catch(()=>''),
   fetch(DATA_BASE+'changes.csv').then(r=>r.ok?r.text():'').catch(()=>''),
   // 跨條文數字不一致（conflicts.py 算好的）。舊資料沒有這個檔也照常開
   fetch(DATA_BASE+'conflicts.json').then(r=>r.ok?r.json():null).catch(()=>null),
-]).then(([faq,hits,meta,runsTxt,chgTxt,conf])=>{
+]).then(([faq,hits,hist,meta,runsTxt,chgTxt,conf])=>{
   ALL=faq; META=meta; if(conf && conf.groups) CONF=conf;
   if(hits && typeof hits==='object') HITS=hits;
+  HIST=hist;
+  if(HIST && HIST.serial) HIST.serial.forEach((s,i)=>SERIAL.set(s,i+1));   // 串列的第 N 個就是 #N
   const a=parseCSV(runsTxt); RUNS={head:a.head, rows:a.rows.slice().reverse()};
   const b=parseCSV(chgTxt);  CHG=asObj(b.head,b.rows).reverse();
   $('#loading').hidden=true;
@@ -758,6 +816,7 @@ function goPage(key){
   $('main').scrollTop=0;
   scrollTo({top:0});            // 窄螢幕是整頁捲
   if(key==='crawl') gha(); else clearTimeout(ghaTimer);
+  if(key==='arch') archRender();
 }
 document.querySelectorAll('.side button[data-page]').forEach(b=>
   b.onclick=()=>goPage(b.dataset.page));
@@ -776,14 +835,14 @@ try{ if(localStorage.getItem('fold')) setFold(true); }catch(e){}
 let LIST=[];
 // 語意查詢的結果。rank 是 sid -> 名次（1 起算），有值就代表現在走語意，
 // 清單要照名次排、而且只留它找到的那些。null 代表回到關鍵字模式。
-const SEM = {key:'', rank:null, ms:0, tag:'', busy:false, err:''};
+const SEM = {key:'', rank:null, ms:0, tag:'', busy:false, err:'', stale:null};
 
 async function semSearch(){
   const mode=$('#smode').value, q=$('#q').value.trim();
   const key=mode+' '+q;
   if(mode==='kw' || !q){ SEM.rank=null; SEM.key=''; SEM.err=''; return false; }
   if(key===SEM.key) return false;                 // 同一題不重打
-  SEM.busy=true; SEM.err=''; semHint();
+  SEM.busy=true; SEM.err=''; SEM.stale=null; semHint();
   try{
     if(mode==='bm25'){
       // 前端自己算。第一次要建索引（八千多筆，約 1~3 秒），之後每次零點幾毫秒。
@@ -805,6 +864,7 @@ async function semSearch(){
       if(!d.ok) throw new Error(d.msg||'查詢失敗');
       SEM.rank=new Map(d.hits.map((h,i)=>[h.sid,i+1]));
       SEM.ms=d.ms; SEM.tag=d.tag; SEM.key=key;
+      SEM.stale=d.stale||null;        // 本機向量比資料舊但在容許範圍內時，工作台會附上各幾筆
     }
   }catch(e){
     SEM.rank=null; SEM.key=''; SEM.err=String(e.message||e);
@@ -828,6 +888,11 @@ function semHint(){
     : SEM.rank ? `${$('#smode').value==='bm25' ? 'BM25'
                       : '語意查詢 <b>'+esc(SEM.tag)+'</b>'}　${SEM.ms} ms　`
                  + `依相關度排序前 ${SEM.rank.size} 筆（只找 FAQ，不生成答案）`
+                 + (SEM.stale && SEM.stale.exact===false
+                     ? `<br><span style="color:#a8541c">⚠ 向量比資料舊：${SEM.stale.changed} 筆內容改過（用舊向量）、`
+                       + `${SEM.stale.added} 筆新增（語意查不到），共 ${(SEM.stale.fraction*100).toFixed(1)}%。`
+                       + `重跑「建立向量.py」只會更新這幾筆。</span>`
+                     : '')
     : ($('#smode').value==='bm25'
          ? '輸入關鍵字或一句話都可以，例如「垃圾車 時間」'
          : '輸入一句話，例如「我家附近的狗一直叫怎麼辦」');
@@ -1182,6 +1247,7 @@ function render(reset){
       <h3>${hl(r.title,ts)}</h3>
       <div class="meta2">
         <span>${esc(r.dept)}</span>
+        ${noOf(r.sid)?`<span title="流水號：固定不變，下架後也不會被別則重用">編號 ${fmtNo(noOf(r.sid))}</span>`:''}
         <span>發布 ${esc((r.published||'').slice(0,10)||'—')}</span>
         ${r.updated?`<span title="${esc(r.updated)}">更新 ${
           esc(r.updated.slice(0,10))}</span>`:''}
@@ -1904,6 +1970,231 @@ document.addEventListener('visibilitychange',()=>{
   if(!document.hidden && !$('section[data-page="crawl"]').hidden) gha(); });
 $('#gha-go').onclick=()=>open(
   `https://github.com/${repoSlug()}/actions/workflows/crawl.yml`,'_blank');
+
+// ---- 異動管理（過期資料庫）---------------------------------------------------
+// 官網只留最新版。history.json 由「歷史.py」每天記：被改掉的舊版、下架的問答，標題與內容都留著。
+// 時間的意義：官網沒說「何時改的」，我們只知道「某次爬取還是舊的、下一次爬取變新的」，
+// 所以每個版本有 first（第一次看到）與 last（最後一次還看到），
+// 舊版的 last 到下一版的 first 之間是「無法確定」的區間，要照實告訴使用者，不能猜。
+const fmtT=t=>t?t.slice(5,16).replace('-','/'):'—';       // '2026-10-01 07:57' → '10/01 07:57'
+const fmtD=t=>t?t.slice(5,10).replace('-','/'):'—';
+let ASHOWN=100;
+
+function archBuild(){
+  if(ARCH) return ARCH;
+  ARCH=[];
+  if(!HIST) return ARCH;
+  const cur=new Map(ALL.map(r=>[r.sid,r])), docs=HIST.docs||{}, gone=HIST.gone||{}, added=HIST.added||{};
+  const sids=new Set([...Object.keys(docs),...Object.keys(gone),...Object.keys(added)]);
+  for(const sid of sids){
+    const r=cur.get(sid), d=docs[sid], g=gone[sid], vs=[];
+    if(d) for(const o of d.old)
+      vs.push({kind:'old',first:o.first,last:o.last,title:o.title,dept:o.dept,answer:o.answer});
+    if(r) vs.push({kind:'cur',first:d?d.cur_from:(added[sid]||HIST.since),last:HIST.updated,
+                   title:r.title||'',dept:r.dept||'',answer:r.answer||''});
+    else if(g) vs.push({kind:'cur',first:added[sid]||HIST.since,last:g.seen,
+                        title:g.title,dept:g.dept,answer:g.answer});
+    if(!vs.length) continue;
+    const top=vs[vs.length-1];
+    const ev=[d&&d.cur_from, g&&g.seen, added[sid]].filter(Boolean).sort().pop()||'';
+    ARCH.push({sid, no:noOf(sid), vs, chg:!!d, gone:g||null, goneNow:r?(r.gone||''):(g?g.at:''),
+               add:added[sid]||'', title:top.title, dept:top.dept,
+               url:(r&&r.url)||(g&&g.url)||'', ev, open:false, diff:new Set(), auto:'', m:-1});
+  }
+  ARCH.sort((a,b)=>b.ev.localeCompare(a.ev));        // 最近有動靜的排前面
+  return ARCH;
+}
+
+// 回答日期那一天，這一則當時是哪一版？
+function archAt(e, day){
+  const rs=day+' 00:00', re=day+' 23:59', v=e.vs, last=v.length-1;
+  if(e.add && re<e.add) return {kind:'notyet', changed:false,
+    html:`<div class="bn unk">❓ ${esc(day)} 這一則還沒出現，約 ${fmtT(e.add)} 才新增。</div>`};
+  if(e.gone && !e.gone.restored && e.gone.at && day>=e.gone.at.slice(0,10))
+    return {kind:'gone', changed:false,
+      html:`<div class="bn unk">🗑 ${esc(day)} 當時這一則已經下架（下架日 ${esc(e.gone.at)}）。</div>`};
+  let certain=-1; const poss=[];
+  for(let i=0;i<v.length;i++){
+    if(rs>=v[i].first && re<=v[i].last) certain=i;
+    const lo=i?v[i-1].last:'', hi=i<last?v[i+1].first:'9999';
+    if(re>lo && rs<hi) poss.push(i);
+  }
+  const wentGone = e.gone && e.gone.at && !e.gone.restored && e.gone.at.slice(0,10)>day;
+  const later = wentGone ? `<br>另外：這一則之後（${esc(e.gone.at)}）已下架。` : '';
+  if(re<v[0].first) return {kind:'before', idx:0, changed:v.length>1||wentGone,
+    html:`<div class="bn unk">❓ 紀錄從 ${fmtT(HIST.since)} 才開始，${esc(day)} 更早，只能參考最早的一版，`
+        +`<b>不保證是當時的內容</b>。${later}</div>`};
+  if(certain>=0){
+    if(certain===last) return {kind:'same', idx:last, changed:!!wentGone,
+      html:`<div class="bn ok">✅ ${esc(day)} 當時就是<b>目前這一版</b>（自 ${fmtT(v[last].first)} 起沒改過）。${later}</div>`};
+    return {kind:'old', idx:certain, changed:true,
+      html:`<div class="bn warn">⚠ ${esc(day)} 當時是<b>舊版</b>（${fmtT(v[certain].first)} ～ ${fmtT(v[certain].last)} 仍看到），`
+          +`之後在 ${fmtT(v[certain].last)} ～ ${fmtT(v[certain+1].first)} 之間改成後來的版本。<b>內容與現在不同</b>，下面標出差異。${later}</div>`};
+  }
+  // 那一天正好落在「改版的空窗」裡：舊版最後一次看到 ～ 新版第一次看到
+  const idxs=poss.length?poss:[last];
+  const span=idxs.map(i=>`${i===last?'目前版本':'舊版'}（${fmtT(v[i].first)} 起）`).join(' 或 ');
+  const differs = idxs.some(i=>i!==last);
+  return {kind:idxs.length>1?'amb':'maybe', idx:idxs[0], idxs, changed:differs||!!wentGone,
+    html:`<div class="bn unk">❓ 這一則在 ${esc(day)} 前後有異動，爬取的時間點無法確定當天是哪一版：${span}。`
+        +`${differs?'<b>可能與現在不同</b>，下面標出差異。':''}${later}</div>`};
+}
+
+function archTermsHit(e, v, ts){
+  const text=norm(v.title)+' '+norm(v.answer)+' '+norm(v.dept);
+  return ts.every(t=>text.includes(t) || (/^\d{1,7}$/.test(t) && Number(t)===e.no));
+}
+function verLabel(e,i){
+  const v=e.vs[i], start=(i===0 && !e.add) ? '（紀錄起點，更早的內容未知）' : '';
+  return v.kind==='cur'
+    ? `目前版本（${fmtT(v.first)} 起${start}）`
+    : `舊版（${fmtT(v.first)}${start} ～ ${fmtT(v.last)} 仍看到）`;
+}
+
+function archCard(e, ts, at){
+  const tags=[ `<span class="tag">編號 ${fmtNo(e.no)}</span>` ];
+  if(e.chg)  tags.push(`<span class="tag chg">內容改過 ${e.vs.length-1} 次</span>`);
+  if(e.goneNow) tags.push(`<span class="tag gone">已下架 ${esc(e.goneNow)}</span>`);
+  else if(e.gone && e.gone.restored) tags.push(`<span class="tag">曾下架・已復原</span>`);
+  if(e.add)  tags.push(`<span class="tag add">新增 ${fmtD(e.add)}</span>`);
+  const top=e.vs[e.vs.length-1];
+  let h=`<div class="acard" data-sid="${esc(e.sid)}">
+    <h3>${hl(top.title,ts)}</h3>
+    <div class="meta2"><span>${tags.join('')}</span><span>${esc(top.dept)}</span>
+      <span>最近動靜 ${fmtT(e.ev)}</span>
+      ${e.url?`<a href="${esc(e.url)}" target="_blank" rel="noopener">在官網開啟 ↗</a>`:''}</div>`;
+  if(at) h+=at.html;
+  if(ts.length && e.m>=0 && !e.open){
+    const sn=snippet({answer:e.vs[e.m].answer},ts);
+    h+=`<div class="meta2" style="margin-top:6px">命中：${esc(verLabel(e,e.m))}${sn?'<br>'+sn:''}</div>`;
+  }
+  h+=`<div class="row" style="margin-top:8px;gap:8px">
+      <button class="ghost" data-a="open">${e.open?'收合':'看各版本與比較'}</button></div>`;
+  if(e.open){
+    const curv=e.vs[e.vs.length-1];
+    for(let i=e.vs.length-1;i>=0;i--){
+      const v=e.vs[i], isCur=i===e.vs.length-1;
+      const here = at && (at.idx===i || (at.idxs&&at.idxs.includes(i)));
+      h+=`<div class="ver${isCur?' cur':''}${e.m===i&&ts.length?' hit':''}">
+        <h4>${esc(verLabel(e,i))}${here?'　◀ 該日適用':''}</h4>
+        <div class="vt">${hl(v.title,ts)}</div>
+        <div class="meta2">${esc(v.dept)}</div>
+        <div class="vb">${v.answer?hl(v.answer,ts):'<i style="color:var(--dim)">（沒有內文）</i>'}</div>`;
+      if(!isCur){
+        h+=`<div class="row" style="margin-top:6px"><button class="ghost" data-a="diff" data-i="${i}">${
+          e.diff.has(i)?'收起差異':'與目前版本比較'}</button></div>`;
+        if(e.diff.has(i)){
+          const same=norm(v.title)===norm(curv.title);
+          h+=`<div class="vt" style="margin-top:6px">差異（<del class="df-del">紅＝當時有、現在沒有</del>　<ins class="df-ins">綠＝現在新增</ins>）</div>`
+            +(same?'':`<div class="vb diff"><b>標題</b>　${diffHtml(v.title,curv.title)}</div>`)
+            +`<div class="vb diff">${v.answer===curv.answer||norm(v.answer)===norm(curv.answer)
+                ?'<i style="color:var(--dim)">內容沒有差別（只有空白或換行不同）</i>'
+                :diffHtml(v.answer,curv.answer)}</div>`;
+        }
+      }
+      h+=`</div>`;
+    }
+  }
+  return h+`</div>`;
+}
+
+function archRender(){
+  const box=$('#alist');
+  if(!HIST){
+    $('#arch-intro').innerHTML='還沒有歷史資料（docs/history.json）。請先執行 <code>python 歷史.py --backfill</code>。';
+    box.innerHTML=''; $('#acount').textContent=''; return;
+  }
+  archBuild();
+  const nChg=ARCH.filter(e=>e.chg).length, nVer=ARCH.reduce((s,e)=>s+(e.chg?e.vs.length-1:0),0),
+        nGone=Object.keys(HIST.gone||{}).length, nAdd=Object.keys(HIST.added||{}).length;
+  $('#arch-intro').innerHTML=
+    `<b>過期資料庫</b>：官網只留最新版，這裡存的是<b>被改掉的舊版</b>和<b>下架的問答</b>（標題、內容都留著）。`
+    +`紀錄從 <b>${fmtT(HIST.since)}</b> 開始（更早的沒有），更新到 ${fmtT(HIST.updated)}。<br>`
+    +`目前有 ${nf(nChg)} 則內容改過（共 ${nf(nVer)} 個舊版）、${nf(nGone)} 則下架過、${nf(nAdd)} 則是紀錄開始後新增的。`
+    +`每一則有固定的 ${SERIAL_DIGITS} 位數編號，編了就不再變，下架的號碼也不會被重用。`;
+  const ts=norm($('#aq').value).split(/\s+/).filter(Boolean), type=$('#atype').value,
+        day=$('#adate').value, onlyDiff=$('#adiff').checked;
+  const list=[];
+  for(const e of ARCH){
+    if(type==='chg' && !e.chg) continue;
+    if(type==='gone' && !e.gone) continue;
+    if(type==='add' && !e.add) continue;
+    e.m=-1;
+    if(ts.length){
+      for(let i=e.vs.length-1;i>=0;i--) if(archTermsHit(e,e.vs[i],ts)){ e.m=i; break; }
+      if(e.m<0) continue;                       // 新舊版本都沒有命中
+    }
+    const at=day?archAt(e,day):null;
+    if(onlyDiff && day && !(at&&at.changed)) continue;
+    // 選了回答日期，而且當時跟現在不同：自動展開、附上差異，省得再按
+    if(at && at.changed && e.auto!==day && at.idx!==undefined && at.idx!==e.vs.length-1){
+      e.open=true; e.diff.add(at.idx); e.auto=day;
+    }
+    list.push([e,at]);
+  }
+  $('#acount').textContent = `符合 ${nf(list.length)} 則`
+    + (list.length>ASHOWN?`，顯示前 ${nf(ASHOWN)} 則`:'')
+    + (day?`（回答日期 ${day}）`:'');
+  box.innerHTML = list.length
+    ? list.slice(0,ASHOWN).map(([e,at])=>archCard(e,ts,at)).join('')
+    : '<div class="hint">沒有符合的。</div>';
+  $('#amore').hidden = list.length<=ASHOWN;
+}
+
+// 差異：先照句子（。！？；與換行）比，改掉的那一段再逐字比。空白與換行不算差異。
+function lcsOps(a,b,eq){
+  const n=a.length, m=b.length, dp=Array.from({length:n+1},()=>new Uint16Array(m+1));
+  for(let i=n-1;i>=0;i--) for(let j=m-1;j>=0;j--)
+    dp[i][j]=eq(a[i],b[j]) ? dp[i+1][j+1]+1 : Math.max(dp[i+1][j],dp[i][j+1]);
+  const ops=[]; let i=0, j=0;
+  while(i<n && j<m){
+    if(eq(a[i],b[j])){ ops.push({t:'=',a:i,b:j}); i++; j++; }
+    else if(dp[i+1][j]>=dp[i][j+1]){ ops.push({t:'-',a:i}); i++; }
+    else { ops.push({t:'+',b:j}); j++; }
+  }
+  while(i<n) ops.push({t:'-',a:i++});
+  while(j<m) ops.push({t:'+',b:j++});
+  return ops;
+}
+function charDiff(x,y){
+  const D=s=>`<del class="df-del">${esc(s)}</del>`, I=s=>`<ins class="df-ins">${esc(s)}</ins>`;
+  if(!x) return I(y);
+  if(!y) return D(x);
+  if(x.length>700 || y.length>700) return D(x)+I(y);      // 太長就整段當作換掉，不逐字算
+  const ops=lcsOps([...x],[...y],(p,q)=>p===q), X=[...x], Y=[...y];
+  let out='', kind='', buf='';
+  const flush=()=>{ if(buf){ out+= kind==='-'?D(buf):kind==='+'?I(buf):esc(buf); buf=''; } };
+  for(const o of ops){
+    const k=o.t, ch=k==='+'?Y[o.b]:X[o.a];
+    if(k!==kind){ flush(); kind=k; }
+    buf+=ch;
+  }
+  flush(); return out;
+}
+function diffHtml(a,b){
+  const W=s=>s.replace(/\s+/g,''), seg=s=>(s||'').split(/(?<=[。！？；\n])/).filter(x=>x!=='');
+  const A=seg(a), B=seg(b), ops=lcsOps(A,B,(x,y)=>W(x)===W(y));
+  let out='', i=0;
+  while(i<ops.length){
+    if(ops[i].t==='='){ out+=esc(B[ops[i].b]); i++; continue; }
+    const dels=[], ins=[];
+    while(i<ops.length && ops[i].t!=='='){ (ops[i].t==='-'?dels:ins).push(ops[i]); i++; }
+    out+=charDiff(dels.map(o=>A[o.a]).join(''), ins.map(o=>B[o.b]).join(''));
+  }
+  return out;
+}
+
+let archTimer;
+['#atype','#adate','#adiff'].forEach(s=>$(s).onchange=()=>{ ASHOWN=100; archRender(); });
+$('#aq').oninput=()=>{ clearTimeout(archTimer); archTimer=setTimeout(()=>{ ASHOWN=100; archRender(); },200); };
+$('#amore').onclick=()=>{ ASHOWN+=100; archRender(); };
+$('#alist').onclick=ev=>{
+  const b=ev.target.closest('[data-a]'); if(!b) return;
+  const e=(ARCH||[]).find(x=>x.sid===b.closest('.acard').dataset.sid); if(!e) return;
+  if(b.dataset.a==='open') e.open=!e.open;
+  if(b.dataset.a==='diff'){ const i=+b.dataset.i; e.diff.has(i)?e.diff.delete(i):e.diff.add(i); }
+  archRender();
+};
 
 // ---- 本機控制台 ------------------------------------------------------------
 // 用「啟動.bat」打開時，工作台.py 會回應 /api/ping，抓取與工具那兩張卡才會出現。
