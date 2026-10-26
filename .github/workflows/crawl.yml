@@ -46,6 +46,9 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: main
+          # 要完整的 git 歷史：「記錄內容異動歷史」萬一狀態對不上，要靠它從每一份舊的
+          # faq.json 整份重建（見下面那一步）。歷史整包約 31 MB，幾秒鐘。
+          fetch-depth: 0
 
       - uses: actions/setup-python@v5
         with:
@@ -113,6 +116,17 @@ jobs:
       # 否則前面爬了一個半小時的 faq.json 會整個丟掉。失敗的話 docs/vectors/ 不會被
       # 覆蓋（cp 在算完之後才做），舊向量留著，網頁端指紋對不上就自動停用語意查詢。
       # 「只同步（不抓）」那個模式沒有新資料，不用重算。
+      # 把「被改掉的舊版」與「下架的問答」記進 docs/history.json（網頁的「異動管理」用）。
+      # 官網只留最新版，改掉就沒了，所以一定要在爬完的當下記。
+      # 失敗不能影響存檔（continue-on-error）。狀態對不上時（例如有人在本機爬完直接推、
+      # 沒經過這支），改用 git 歷史整份重建，再補記今天這一步；重建的結果與每天累積的相同，
+      # 流水號也不會變。「只同步（不抓）」沒有新資料，不用記。
+      - name: 記錄內容異動歷史
+        if: steps.run.outputs.code == '0' && steps.run.outputs.skip != '1' && steps.run.outputs.force != '1'
+        continue-on-error: true
+        run: |
+          python 歷史.py || { echo '狀態對不上，改用 git 歷史整份重建'; python 歷史.py --backfill && python 歷史.py; }
+
       - name: 快取語意模型
         if: steps.run.outputs.code == '0' && steps.run.outputs.skip != '1' && steps.run.outputs.force != '1'
         uses: actions/cache@v4
