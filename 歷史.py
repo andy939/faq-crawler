@@ -92,12 +92,10 @@ def apply(hist, prev, new, prev_time, now):
     since, added, docs = hist["since"], hist["added"], hist["docs"]
     gone = hist.setdefault("gone", {})
     n = 0
-    fresh = []                                  # 這一步新出現的，等一下依固定順序編流水號
     for sid, x in new.items():
         p = prev.get(sid)
         if p is None:
             added.setdefault(sid, now)          # 紀錄開始之後才出現的新 FAQ
-            fresh.append(x)
             if x.get("gone"):
                 gone[sid] = snapshot_gone(x, now)
             continue
@@ -116,9 +114,11 @@ def apply(hist, prev, new, prev_time, now):
                          "answer": p.get("answer") or ""})
         d["cur_from"] = now
         n += 1
+    # 每一則都要有流水號。正常只有「這一步新出現的」還沒編；萬一有漏編的（例如舊格式、
+    # 手動改過），也一併補上，順序規則不變，已編的號碼絕不動。
     have = set(hist["serial"])
-    hist["serial"].extend(x["sid"] for x in sorted(fresh, key=serial_key)
-                          if x["sid"] not in have)
+    missing = [x for x in new.values() if x["sid"] not in have]
+    hist["serial"].extend(x["sid"] for x in sorted(missing, key=serial_key))
     return n
 
 

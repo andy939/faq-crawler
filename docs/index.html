@@ -128,6 +128,9 @@ button:disabled{opacity:.45;cursor:default;filter:none}
 .tag.chg{background:#fff4e5;border-color:#f3d6a8;color:#a8541c}
 .tag.gone{background:#fdecea;border-color:#f3b9b2;color:#c0392b}
 .tag.add{background:#e6f7f7;border-color:#a8dede;color:var(--deep)}
+/* 同標題／疑似重新發布：點下去會把相關的幾則一起列出來 */
+.tag.dup{background:#eef1fb;border-color:#c5cdee;color:#3b4a9c;cursor:pointer}
+.tag.dup:hover{background:#e0e6f9}
 .bn{margin:8px 0 2px;padding:7px 11px;border-radius:8px;font-size:13px;line-height:1.6}
 .bn.ok{background:#eaf7ee;border:1px solid #bfe3c8;color:#1d6b35}
 .bn.warn{background:#fff4e5;border:1px solid #f3d6a8;color:#8a4a12}
@@ -156,6 +159,13 @@ del.df-del{background:#fbd9d5;color:#8e2418}
            border:0;border-radius:999px;padding:5px 14px;font-size:13px;
            white-space:nowrap;transition:color .18s}
 .seg .segb:hover{filter:none;color:var(--ink)}
+/* 「標題內文 ⇄ 編號」循環切換的按鈕：標題內文是一般的白底，編號模式變色，一眼看得出現在在哪個模式 */
+.fbtn{flex:none;min-width:92px;border-radius:999px;padding:7px 14px;background:#fff;color:var(--ink);
+      border:1px solid var(--line);font-size:13.5px;white-space:nowrap}
+.fbtn::after{content:" ⇄";color:var(--dim);font-size:12px}
+.fbtn.on{background:var(--accent);color:#fff;border-color:transparent;font-weight:600}
+.fbtn.on::after{color:#e6fbfb}
+#seg.off{opacity:.4;pointer-events:none}           /* 編號模式用不到查法，灰掉 */
 .seg .segb:disabled{opacity:.45;cursor:not-allowed}
 .seg .segb:disabled:hover{color:var(--dim)}
 .seg .segb[aria-checked="true"]{color:#fff;font-weight:600}
@@ -375,8 +385,11 @@ tr.cmp-row td{background:#fafbfc;padding:10px 12px}
     <!-- 第一排只留搜尋框跟查法：語意查詢是整句話，輸入框要夠寬。
          年份、排序這些不常動的，移到第二排。 -->
     <div class="row" style="align-items:center;margin-bottom:6px">
-      <input id="q" type="search" placeholder="關鍵字，或直接打一整句話"
-             style="flex:1;min-width:280px;max-width:680px">
+      <input id="q" type="search" placeholder="標題或內文的關鍵字，或直接打一整句話"
+             style="flex:1;min-width:240px;max-width:620px">
+      <!-- 找什麼：一顆按鈕循環切換。預設「標題內文」，按一下變「編號」（只找 7 位流水號），再按一下換回來。
+           不再猜輸入的是不是編號。 -->
+      <button type="button" class="fbtn" id="fbtn" title="點一下切換：標題內文 ⇄ 編號">標題內文</button>
       <!-- 查法：select 藏起來當資料來源（其他程式碼都讀它的 value），
            畫面上顯示的是下面這排分段按鈕，選項會自動跟著 select 長出來。 -->
       <select id="smode" title="查法" hidden><option value="kw">關鍵字</option></select>
@@ -445,7 +458,7 @@ tr.cmp-row td{background:#fafbfc;padding:10px 12px}
   <input type="hidden" id="ddept">
   <div class="wrap" style="margin-top:10px">
     <table><thead><tr>
-      <th>發布時間</th><th>更新時間</th><th>檢視時間</th><th>下版日期</th>
+      <th>編號</th><th>發布時間</th><th>更新時間</th><th>檢視時間</th><th>下版日期</th>
       <th>標題</th><th>發布機關</th>
       <th class="num sep">抓下<br>
         <span style="font-weight:400;color:#9aa2ac">byte・gzip後</span></th>
@@ -581,8 +594,9 @@ tr.cmp-row td{background:#fafbfc;padding:10px 12px}
   <section id="tab-arch">
     <div class="hint" style="margin:0 0 10px" id="arch-intro">載入中…</div>
     <div class="row" style="align-items:center;margin-bottom:8px">
-      <input id="aq" type="search" placeholder="搜尋標題或內容（新舊版本都會找）"
-             style="flex:1;min-width:240px;max-width:560px">
+      <input id="aq" type="search" placeholder="標題或內文的關鍵字（新舊版本都會找）"
+             style="flex:1;min-width:220px;max-width:520px">
+      <button type="button" class="fbtn" id="afbtn" title="點一下切換：標題內文 ⇄ 編號">標題內文</button>
       <select id="atype">
         <option value="">全部（改過、下架、新增）</option>
         <option value="chg">內容改過</option>
@@ -706,6 +720,60 @@ let HIST=null, ARCH=null; const SERIAL=new Map();
 const SERIAL_DIGITS=7;
 const fmtNo=n=>n?String(n).padStart(SERIAL_DIGITS,'0'):'';
 const noOf=sid=>SERIAL.get(sid)||0;
+// 找編號靠搜尋列旁邊的「關鍵字｜編號」切換，不再猜輸入的是不是編號：
+// 內文裡本來就有「#1」「1999」「0001001」這類字（實測 #1 曾把編號 1 擠到第 20 名），猜一定會撞。
+// 關鍵字模式只比文字，完全不看編號；編號模式只找編號。
+let FIELD='kw', AFIELD='kw';                       // 問答查詢、異動管理各自的切換狀態
+const NO_IN=/^#?(\d{1,7})$/;                       // 編號模式裡輸入的格式：數字，前面可有 #，不用補零
+function numsFrom(ts){                             // 輸入裡所有編號（空白隔開可一次查好幾個）
+  const s=new Set();
+  for(const t of ts){ const m=NO_IN.exec(t); if(m) s.add(Number(m[1])); }
+  return s;
+}
+const NO_HINT='輸入 7 位編號，例如 0008354（空白隔開可一次查好幾個）';
+// 編號標籤：還沒有編號的（理論上只會是剛新增、排程還沒整理歷史的）顯示「待編號」，不要空白
+const noTag=(sid,cls='')=>{
+  const n=noOf(sid);
+  if(n) return `<span${cls?` class="${cls}"`:''} title="流水號：固定不變，變更、下架、更新都不會換，下架後號碼也不會被別則重用">編號 ${fmtNo(n)}</span>`;
+  return HIST?`<span${cls?` class="${cls}"`:''} title="這一則剛新增，下一次整理歷史時就會編號">編號 待編號</span>`:'';
+};
+
+// ---- 標題重複的區分 ----------------------------------------------------------
+// 官網上不同機關可能有一模一樣的標題，同一機關也偶爾重複。編號各自不同，但畫面上要看得出來「有另一則」。
+// 另外標出「疑似重新發布」：官網把同一則換了識別碼重新發布時，我們會當成新的一則、給新的編號，
+// 所以同機關、同標題、一則已下架一則還在，或外部連結換了標題，要讓人看得出來它們可能是同一則。
+// 不自動合併：也可能只是不同年度的公告。
+let TGRP=null, EGRP=null;
+function buildGroups(){
+  if(TGRP) return;
+  TGRP=new Map(); EGRP=new Map();
+  for(const x of ALL){
+    const k=(x.title||'').replace(/\s+/g,'');
+    if(k){ if(!TGRP.has(k)) TGRP.set(k,[]); TGRP.get(k).push(x); }
+    if(x.sid.startsWith('EXT:')){                       // 外部連結：sid 是「EXT:網址|標題」
+      const u=x.sid.split('|')[0];
+      if(!EGRP.has(u)) EGRP.set(u,[]); EGRP.get(u).push(x);
+    }
+  }
+}
+function relatedOf(r){
+  buildGroups();
+  const out=[], seen=new Set([r.sid]);
+  const k=(r.title||'').replace(/\s+/g,'');
+  for(const x of (TGRP.get(k)||[])) if(!seen.has(x.sid)){ seen.add(x.sid); out.push({x,why:'title'}); }
+  if(r.sid.startsWith('EXT:'))
+    for(const x of (EGRP.get(r.sid.split('|')[0])||[]))
+      if(!seen.has(x.sid) && !!x.gone!==!!r.gone){ seen.add(x.sid); out.push({x,why:'ext'}); }
+  return out;
+}
+function dupBadge(r){
+  const rel=relatedOf(r); if(!rel.length) return '';
+  const same=o=>norm(o.x.dept)===norm(r.dept);
+  const repub=rel.some(o=>o.why==='ext' || (same(o) && !!o.x.gone!==!!r.gone));
+  const tip=rel.map(o=>`${fmtNo(noOf(o.x.sid))}　${o.x.dept||'（沒有機關）'}${o.x.gone?'（已下架）':''}${same(o)?'':'　← 不同機關'}`).join('\n');
+  const label=repub?'疑似重新發布':rel.some(o=>!same(o))?`同標題・不同機關 ${rel.length} 則`:`同標題 ${rel.length} 則`;
+  return `<span class="tag dup" data-title="${esc(r.title)}" title="${esc(`相關的其他 ${rel.length} 則：\n${tip}\n（點一下，把它們一起列出來）`)}">${label}</span>`;
+}
 
 Promise.all([
   fetch(DATA_BASE+'faq.json').then(r=>r.json()),
@@ -840,7 +908,7 @@ const SEM = {key:'', rank:null, ms:0, tag:'', busy:false, err:'', stale:null};
 async function semSearch(){
   const mode=$('#smode').value, q=$('#q').value.trim();
   const key=mode+' '+q;
-  if(mode==='kw' || !q){ SEM.rank=null; SEM.key=''; SEM.err=''; return false; }
+  if(mode==='kw' || !q || FIELD==='no'){ SEM.rank=null; SEM.key=''; SEM.err=''; return false; }
   if(key===SEM.key) return false;                 // 同一題不重打
   SEM.busy=true; SEM.err=''; SEM.stale=null; semHint();
   try{
@@ -875,6 +943,7 @@ async function semSearch(){
 
 function semHint(){
   const el=$('#semhint'); if(!el) return;
+  if(FIELD==='no'){ el.hidden=false; el.innerHTML=NO_HINT+'。已下架的也找得到，年份、機關等篩選不套用。'; return; }
   if($('#smode').value==='kw'){ el.hidden=true; return; }
   el.hidden=false;
   const web = $('#smode').value==='e5-small' && !LOCAL_OK;     // 瀏覽器自己算的那條
@@ -1063,6 +1132,12 @@ async function webSemantic(q, k){
 }
 
 function filtered(){
+  // 編號模式：只找編號。已下架的也找得到（編號永遠保留）；年份、機關這些篩選不套用 ——
+  // 用編號查就是要那一則，不該被別的條件濾掉。
+  if(FIELD==='no'){
+    const nums=numsFrom(terms());
+    return ALL.filter(r=>nums.has(noOf(r.sid))).sort((a,b)=>noOf(a.sid)-noOf(b.sid));
+  }
   const ts=terms(), dept=$('#dept').value,
         year=$('#year').value, onlyfile=$('#onlyfile').checked,
         gone=$('#showgone').checked, ex=$('#q').dataset.expire||'';
@@ -1224,21 +1299,38 @@ function bodyHtml(r){
      <button class="ghost" data-copy="answer">📋 複製答案</button>
      <button class="ghost" data-close="1">收合</button></div></div>`;
 }
+// 編號模式的筆數說明：找到幾則；輸入了還沒有人使用的編號也要講，不要只是空白
+function noCountText(){
+  const nums=[...numsFrom(terms())];
+  if(!nums.length) return NO_HINT;
+  const found=new Set(LIST.map(r=>noOf(r.sid)));
+  const miss=nums.filter(n=>!found.has(n)).map(fmtNo);
+  return `編號查詢：找到 ${nf(LIST.length)} 則`
+    + (miss.length?`；${miss.join('、')} 還沒有任何一則使用（目前編到 ${fmtNo(SERIAL.size)}）`:'');
+}
+// 標題內文模式下，輸入剛好是一個 7 位數的編號：提醒一下，不要讓人以為沒有這一則
+function noLookalike(ts){
+  if(ts.length!==1) return '';
+  const m=/^#?(\d{7})$/.exec(ts[0]); if(!m || !Number(m[1]) || Number(m[1])>SERIAL.size) return '';
+  return `　💡「${m[1]}」是一個編號，要用編號找請切到「編號」`;
+}
 function render(reset){
   if(reset){ shown=200; PEEK=null; KEEP=null; $('#listbox').scrollTop=0; }
   LIST=filtered();
   orgPanel();
-  const ts=terms();
+  const ts=FIELD==='no' ? [] : terms();             // 編號模式不標記字，數字會亂亮
   const idx=PEEK!=null ? [PEEK]
     : LIST.slice(0,shown).map((_,i)=>i);
   const info=LIST.info;               // 只有一般搜尋有輸入文字時才有
   $('#count').textContent=PEEK!=null
     ? '🔒 已鎖定這題，點標題、按「收合」或 Esc 回到清單'
+    : FIELD==='no' ? noCountText()
     : (info ? (info.fallback
           ? `沒有字面完全符合的，改依相近度排序，列出 ${nf(LIST.length)} 筆`
           : `字面符合 ${nf(info.exact)} 筆`+(info.extra?`，另補 ${nf(info.extra)} 筆相近的`:''))
         : `符合 ${nf(LIST.length)} 筆`)
-      +(LIST.length>shown?`，顯示前 ${nf(shown)} 筆`:'');
+      +(LIST.length>shown?`，顯示前 ${nf(shown)} 筆`:'')
+      +(FIELD==='kw' ? noLookalike(terms()) : '');
   $('#list').innerHTML=idx.map(i=>{const r=LIST[i], open=i===PEEK;
     const cut=(PEEK==null && info && info.extra && i===info.exact)
       ? '<div class="cut">以下字面沒有完全符合，但字詞相近</div>' : '';
@@ -1247,7 +1339,7 @@ function render(reset){
       <h3>${hl(r.title,ts)}</h3>
       <div class="meta2">
         <span>${esc(r.dept)}</span>
-        ${noOf(r.sid)?`<span title="流水號：固定不變，下架後也不會被別則重用">編號 ${fmtNo(noOf(r.sid))}</span>`:''}
+        ${noTag(r.sid)}${dupBadge(r)}
         <span>發布 ${esc((r.published||'').slice(0,10)||'—')}</span>
         ${r.updated?`<span title="${esc(r.updated)}">更新 ${
           esc(r.updated.slice(0,10))}</span>`:''}
@@ -1281,7 +1373,15 @@ async function copyText(t, btn){
   const old=btn.textContent; btn.textContent='✓ 已複製';
   setTimeout(()=>{ btn.textContent=old; },1200);
 }
+// 點「同標題／疑似重新發布」標籤：用那個標題搜尋，把相關的幾則一起列出來
+function useTitle(t){
+  if(FIELD!=='kw') setField('kw');
+  const kw=[...document.querySelectorAll('#seg .segb')].find(b=>b.textContent==='搜尋');
+  if($('#smode').value!=='kw' && kw) kw.click();
+  $('#q').value=t; render(true);
+}
 $('#list').onclick=e=>{
+  const dp=e.target.closest('.dup'); if(dp){ useTitle(dp.dataset.title); return; }
   const el=e.target.closest('.item'); if(!el) return;
   // 用滑鼠拖曳選字（例如要複製標題）時，放開那一下也算 click ——
   // 有選到字就不要切換鎖定，不然一選標題就鎖住／解鎖
@@ -1356,16 +1456,29 @@ $('#smode').onchange=async()=>{
   new ResizeObserver(mark).observe(box);
   paint();
 })();
+// 「標題內文 ⇄ 編號」一顆按鈕循環切換。編號模式只找編號，旁邊「搜尋／語意」那排用不到，灰掉。
+function setField(f){
+  FIELD=f;
+  const fb=$('#fbtn'); fb.textContent = f==='no' ? '編號' : '標題內文';
+  fb.classList.toggle('on', f==='no'); fb.setAttribute('aria-pressed', String(f==='no'));
+  $('#q').placeholder = f==='no' ? '輸入 7 位編號，例如 0008354（空白隔開可查好幾個）'
+                                : '標題或內文的關鍵字，或直接打一整句話';
+  $('#seg').classList.toggle('off', f==='no');
+  SEM.rank=null; SEM.key=''; SEM.err=''; SEM.stale=null; semHint();   // 上一次的語意名次表不能留著
+  render(true);
+  if(f==='kw' && $('#smode').value!=='kw') semSearch().then(()=>render(true));
+}
+$('#fbtn').onclick=()=>setField(FIELD==='kw' ? 'no' : 'kw');
 $('#q').addEventListener('focus',()=>{delete $('#q').dataset.expire;});
 ['#year','#sort','#onlyfile','#showgone'].forEach(s=>
   $(s).onchange=()=>render(true));
 $('#orgq').oninput=orgPanel;      // 只篩左邊的清單，不動搜尋結果
 $('#more').onclick=()=>{shown+=200;render(false);};
-const FAQ_COLS=['標題','發布機關','發布時間','更新時間','檢視時間','下版日期',
+const FAQ_COLS=['編號','標題','發布機關','發布時間','更新時間','檢視時間','下版日期',
   '維護單位','內容','附件','抓下byte','原始byte','需要byte','類型','已下架',
   '網址','sid'];
 $('#csv').onclick=e=>toExcel('常見問答', FAQ_COLS, LIST.map(r=>[
-  r.title, r.dept, (r.published||'').slice(0,10), r.updated, r.reviewed,
+  noOf(r.sid)?fmtNo(noOf(r.sid)):'', r.title, r.dept, (r.published||'').slice(0,10), r.updated, r.reviewed,
   r.expire, r.maintainer, (r.answer||'').replace(/[\s]+/g,' '),
   (r.files||[]).map(f=>f.name).join(' | '),
   r.bytes_wire||0, r.bytes_raw||0, r.bytes_needed||0,
@@ -1852,7 +1965,7 @@ function dataRows(){
 }
 const med=a=>{const s=[...a].sort((x,y)=>x-y);return s.length?s[s.length>>1]:0;};
 
-const DATA_ACC=[r=>(r.published||'').slice(0,10), r=>r.updated||'',
+const DATA_ACC=[r=>noOf(r.sid), r=>(r.published||'').slice(0,10), r=>r.updated||'',
                 r=>r.reviewed||'', r=>r.expire||'', r=>r.title||'',
                 r=>r.dept||'', r=>r.bytes_wire||0, r=>r.bytes_raw||0,
                 r=>r.bytes_needed||0, r=>r.answer||''];
@@ -1866,6 +1979,7 @@ function dataTable(){
   DROWS=applySort('data', dataRows(), DATA_ACC);
   $('#cnt').textContent=`符合 ${nf(DROWS.length)} 筆`;
   $('#tb').innerHTML=DROWS.slice(0,300).map(r=>`<tr>
+      <td style="white-space:nowrap;font-variant-numeric:tabular-nums">${noOf(r.sid)?fmtNo(noOf(r.sid)):(HIST?'待編號':'')}</td>
       <td>${esc((r.published||'').slice(0,10))}</td>
       <td>${esc(r.updated||'')}</td>
       <td>${esc(r.reviewed)||NA}</td>
@@ -1880,9 +1994,9 @@ function dataTable(){
           title="${esc((r.answer||'').slice(0,400))}">${
         esc((r.answer||'').replace(/\s+/g,' ').slice(0,120))}</td>
     </tr>`).join('')
-    ||'<tr><td colspan="10" style="color:#9aa2ac">沒有資料</td></tr>';
+    ||'<tr><td colspan="11" style="color:#9aa2ac">沒有資料</td></tr>';
   if(DROWS.length>300)
-    $('#tb').innerHTML+='<tr><td colspan="10" style="color:#9aa2ac">'+
+    $('#tb').innerHTML+='<tr><td colspan="11" style="color:#9aa2ac">'+
       `…只顯示前 300 筆，其餘請匯出（共 ${nf(DROWS.length)} 筆）</td></tr>`;
   bindSort($('#tb').closest('table'), 'data', dataTable);
 }
@@ -2042,7 +2156,7 @@ function archAt(e, day){
 
 function archTermsHit(e, v, ts){
   const text=norm(v.title)+' '+norm(v.answer)+' '+norm(v.dept);
-  return ts.every(t=>text.includes(t) || (/^\d{1,7}$/.test(t) && Number(t)===e.no));
+  return ts.every(t=>text.includes(t));
 }
 function verLabel(e,i){
   const v=e.vs[i], start=(i===0 && !e.add) ? '（紀錄起點，更早的內容未知）' : '';
@@ -2052,12 +2166,13 @@ function verLabel(e,i){
 }
 
 function archCard(e, ts, at){
-  const tags=[ `<span class="tag">編號 ${fmtNo(e.no)}</span>` ];
+  const tags=[ noTag(e.sid,'tag') ];
   if(e.chg)  tags.push(`<span class="tag chg">內容改過 ${e.vs.length-1} 次</span>`);
   if(e.goneNow) tags.push(`<span class="tag gone">已下架 ${esc(e.goneNow)}</span>`);
   else if(e.gone && e.gone.restored) tags.push(`<span class="tag">曾下架・已復原</span>`);
   if(e.add)  tags.push(`<span class="tag add">新增 ${fmtD(e.add)}</span>`);
   const top=e.vs[e.vs.length-1];
+  tags.push(dupBadge({sid:e.sid,title:top.title,dept:top.dept,gone:e.goneNow}));
   let h=`<div class="acard" data-sid="${esc(e.sid)}">
     <h3>${hl(top.title,ts)}</h3>
     <div class="meta2"><span>${tags.join('')}</span><span>${esc(top.dept)}</span>
@@ -2112,15 +2227,18 @@ function archRender(){
     +`紀錄從 <b>${fmtT(HIST.since)}</b> 開始（更早的沒有），更新到 ${fmtT(HIST.updated)}。<br>`
     +`目前有 ${nf(nChg)} 則內容改過（共 ${nf(nVer)} 個舊版）、${nf(nGone)} 則下架過、${nf(nAdd)} 則是紀錄開始後新增的。`
     +`每一則有固定的 ${SERIAL_DIGITS} 位數編號，編了就不再變，下架的號碼也不會被重用。`;
-  const ts=norm($('#aq').value).split(/\s+/).filter(Boolean), type=$('#atype').value,
+  const raw=norm($('#aq').value).split(/\s+/).filter(Boolean), type=$('#atype').value,
         day=$('#adate').value, onlyDiff=$('#adiff').checked;
+  const noMode=AFIELD==='no', nums=noMode?numsFrom(raw):new Set();
+  const ts=noMode?[]:raw;                       // 編號模式不比文字、也不標記字
   const list=[];
   for(const e of ARCH){
     if(type==='chg' && !e.chg) continue;
     if(type==='gone' && !e.gone) continue;
     if(type==='add' && !e.add) continue;
     e.m=-1;
-    if(ts.length){
+    if(noMode){ if(!nums.has(e.no)) continue; }              // 編號模式：只看編號
+    else if(ts.length){
       for(let i=e.vs.length-1;i>=0;i--) if(archTermsHit(e,e.vs[i],ts)){ e.m=i; break; }
       if(e.m<0) continue;                       // 新舊版本都沒有命中
     }
@@ -2132,12 +2250,22 @@ function archRender(){
     }
     list.push([e,at]);
   }
-  $('#acount').textContent = `符合 ${nf(list.length)} 則`
+  // 用編號查、但那一則從沒改過也沒下架（所以不在過期資料庫裡）：直接回答，不要留一片空白
+  let note='';
+  for(const n of nums){
+    const sid=HIST.serial[n-1], label=fmtNo(n);
+    if(!sid){ note+=`<div class="bn unk">❓ 編號 ${label} 還沒有任何一則使用。</div>`; continue; }
+    if(ARCH.some(e=>e.sid===sid)) continue;                       // 有紀錄的，上面的清單會顯示
+    const r=ALL.find(x=>x.sid===sid);
+    note+=`<div class="bn ok">✅ 編號 ${label}${r?`「${esc(r.title)}」（${esc(r.dept||'')}）`:''}自 ${fmtT(HIST.since)} 紀錄開始以來`
+      +`<b>沒有改過內容，也沒有下架</b>，目前這一版就是當時的版本。</div>`;
+  }
+  $('#acount').textContent = (noMode && !nums.size) ? NO_HINT : `符合 ${nf(list.length)} 則`
     + (list.length>ASHOWN?`，顯示前 ${nf(ASHOWN)} 則`:'')
     + (day?`（回答日期 ${day}）`:'');
-  box.innerHTML = list.length
+  box.innerHTML = note + (list.length
     ? list.slice(0,ASHOWN).map(([e,at])=>archCard(e,ts,at)).join('')
-    : '<div class="hint">沒有符合的。</div>';
+    : (note ? '' : '<div class="hint">沒有符合的。</div>'));
   $('#amore').hidden = list.length<=ASHOWN;
 }
 
@@ -2185,10 +2313,24 @@ function diffHtml(a,b){
 }
 
 let archTimer;
+// 異動管理的「標題內文 ⇄ 編號」，跟問答查詢那顆一樣：一顆按鈕循環切換
+$('#afbtn').onclick=()=>{
+  AFIELD = AFIELD==='kw' ? 'no' : 'kw';
+  const b=$('#afbtn'); b.textContent = AFIELD==='no' ? '編號' : '標題內文';
+  b.classList.toggle('on', AFIELD==='no'); b.setAttribute('aria-pressed', String(AFIELD==='no'));
+  $('#aq').placeholder = AFIELD==='no' ? '輸入 7 位編號，例如 0008354（空白隔開可查好幾個）'
+                                       : '標題或內文的關鍵字（新舊版本都會找）';
+  ASHOWN=100; archRender();
+};
 ['#atype','#adate','#adiff'].forEach(s=>$(s).onchange=()=>{ ASHOWN=100; archRender(); });
 $('#aq').oninput=()=>{ clearTimeout(archTimer); archTimer=setTimeout(()=>{ ASHOWN=100; archRender(); },200); };
 $('#amore').onclick=()=>{ ASHOWN+=100; archRender(); };
 $('#alist').onclick=ev=>{
+  const dp=ev.target.closest('.dup');
+  if(dp){
+    if(AFIELD!=='kw') $('#afbtn').click();                 // 在編號模式點的話先切回標題內文
+    $('#aq').value=dp.dataset.title; $('#atype').value=''; ASHOWN=100; archRender(); return;
+  }
   const b=ev.target.closest('[data-a]'); if(!b) return;
   const e=(ARCH||[]).find(x=>x.sid===b.closest('.acard').dataset.sid); if(!e) return;
   if(b.dataset.a==='open') e.open=!e.open;
