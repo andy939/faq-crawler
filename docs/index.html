@@ -143,6 +143,9 @@ button:disabled{opacity:.45;cursor:default;filter:none}
 .ver .vb{white-space:pre-wrap;word-break:break-word;font-size:13.5px;line-height:1.7;
          max-height:260px;overflow:auto;background:#fafbfc;border-radius:6px;padding:6px 9px}
 .ver .vb.diff{background:#fff}
+.df-gap{display:inline-block;width:3px;height:1.15em;vertical-align:text-bottom;margin:0 1px;border-radius:1px}
+.df-gap.del{background:#c0392b}
+.df-gap.ins{background:#2e9b4f}
 ins.df-ins{background:#d6f5dd;text-decoration:none;color:#14562b}
 del.df-del{background:#fbd9d5;color:#8e2418}
 .acard .row button{padding:3px 11px;font-size:12.5px}
@@ -2113,7 +2116,7 @@ function archBuild(){
     const ev=[d&&d.cur_from, g&&g.seen, added[sid]].filter(Boolean).sort().pop()||'';
     ARCH.push({sid, no:noOf(sid), vs, chg:!!d, gone:g||null, goneNow:r?(r.gone||''):(g?g.at:''),
                add:added[sid]||'', title:top.title, dept:top.dept,
-               url:(r&&r.url)||(g&&g.url)||'', ev, open:false, diff:new Set(), auto:'', m:-1});
+               url:(r&&r.url)||(g&&g.url)||'', ev, open:false, cmp:null, auto:'', m:-1});
   }
   ARCH.sort((a,b)=>b.ev.localeCompare(a.ev));        // 最近有動靜的排前面
   return ARCH;
@@ -2186,27 +2189,34 @@ function archCard(e, ts, at){
   h+=`<div class="row" style="margin-top:8px;gap:8px">
       <button class="ghost" data-a="open">${e.open?'收合':'看各版本與比較'}</button></div>`;
   if(e.open){
-    const curv=e.vs[e.vs.length-1];
-    for(let i=e.vs.length-1;i>=0;i--){
-      const v=e.vs[i], isCur=i===e.vs.length-1;
+    // 差異直接標在兩個版本的文字上，不另外再印一份：目前版本裡「新增的」標綠、
+    // 被拿來比的舊版裡「被拿掉的」標紅。預設拿目前版本跟它的前一版比；
+    // 點別的舊版的「與目前版本比較」就改比那一版；選了回答日期則自動比當天適用的那一版。
+    const last=e.vs.length-1, curv=e.vs[last];
+    const cmpIdx = e.cmp==null ? (last>0 ? last-1 : -1) : e.cmp;     // -1＝不比
+    const cmpv = (cmpIdx>=0 && cmpIdx<last) ? e.vs[cmpIdx] : null;
+    const DA = cmpv ? diffSides(cmpv.answer, curv.answer) : null;
+    const DT = cmpv && norm(cmpv.title)!==norm(curv.title) ? diffSides(cmpv.title, curv.title) : null;
+    if(cmpv){
+      const none = !/df-(ins|del|gap)/.test(DA.o+DA.n+(DT?DT.o+DT.n:''));
+      h+=`<div class="meta2" style="margin-top:8px">${none
+        ? '這兩版的文字沒有差別（只有空白或換行不同）'
+        : `標色：<del class="df-del">紅字＝${esc(fmtT(cmpv.first))} 那版有、目前沒有</del>　<ins class="df-ins">綠字＝目前新增</ins>`
+          +`　<span class="df-gap del"></span><span class="df-gap ins"></span> 細線＝另一版在這個位置拿掉／新增了內容（滑鼠移上去看）`}</div>`;
+    }
+    for(let i=last;i>=0;i--){
+      const v=e.vs[i], isCur=i===last, isCmp=cmpv && i===cmpIdx;
       const here = at && (at.idx===i || (at.idxs&&at.idxs.includes(i)));
+      const t = isCur&&DT ? DT.n : isCmp&&DT ? DT.o : hl(v.title,ts);
+      const a = isCur&&DA ? DA.n : isCmp&&DA ? DA.o : (v.answer?hl(v.answer,ts):'');
       h+=`<div class="ver${isCur?' cur':''}${e.m===i&&ts.length?' hit':''}">
         <h4>${esc(verLabel(e,i))}${here?'　◀ 該日適用':''}</h4>
-        <div class="vt">${hl(v.title,ts)}</div>
+        <div class="vt">${t}</div>
         <div class="meta2">${esc(v.dept)}</div>
-        <div class="vb">${v.answer?hl(v.answer,ts):'<i style="color:var(--dim)">（沒有內文）</i>'}</div>`;
-      if(!isCur){
+        <div class="vb">${a||'<i style="color:var(--dim)">（沒有內文）</i>'}</div>`;
+      if(!isCur)
         h+=`<div class="row" style="margin-top:6px"><button class="ghost" data-a="diff" data-i="${i}">${
-          e.diff.has(i)?'收起差異':'與目前版本比較'}</button></div>`;
-        if(e.diff.has(i)){
-          const same=norm(v.title)===norm(curv.title);
-          h+=`<div class="vt" style="margin-top:6px">差異（<del class="df-del">紅＝當時有、現在沒有</del>　<ins class="df-ins">綠＝現在新增</ins>）</div>`
-            +(same?'':`<div class="vb diff"><b>標題</b>　${diffHtml(v.title,curv.title)}</div>`)
-            +`<div class="vb diff">${v.answer===curv.answer||norm(v.answer)===norm(curv.answer)
-                ?'<i style="color:var(--dim)">內容沒有差別（只有空白或換行不同）</i>'
-                :diffHtml(v.answer,curv.answer)}</div>`;
-        }
-      }
+          isCmp?'✓ 正在和目前版本比較（再按取消）':'與目前版本比較'}</button></div>`;
       h+=`</div>`;
     }
   }
@@ -2246,7 +2256,7 @@ function archRender(){
     if(onlyDiff && day && !(at&&at.changed)) continue;
     // 選了回答日期，而且當時跟現在不同：自動展開、附上差異，省得再按
     if(at && at.changed && e.auto!==day && at.idx!==undefined && at.idx!==e.vs.length-1){
-      e.open=true; e.diff.add(at.idx); e.auto=day;
+      e.open=true; e.cmp=at.idx; e.auto=day;
     }
     list.push([e,at]);
   }
@@ -2284,32 +2294,55 @@ function lcsOps(a,b,eq){
   while(j<m) ops.push({t:'+',b:j++});
   return ops;
 }
-function charDiff(x,y){
+// 差異直接標在兩個版本的文字上：回傳 {o: 舊版的文字（被拿掉的標紅）, n: 新版的文字（新增的標綠）}，
+// 兩份各自是完整的文字，只是標了顏色，不再另外印一份「差異」。
+// 純刪除（舊版有、目前沒有）時，目前版本上看不到東西；純新增時，舊版上看不到。
+// 所以在「另一邊」對應的位置留一條細線（紅＝這裡拿掉了、綠＝這裡新增了），滑鼠移上去說明內容，
+// 這樣才找得到改動在另一版的哪個位置。
+const gapMark=(kind,t)=>`<span class="df-gap ${kind}" title="${esc(
+  (kind==='del'?'舊版在這裡有「':'目前版本在這裡新增了「')+(t.length>60?t.slice(0,60)+'…':t)
+  +(kind==='del'?'」，目前版本拿掉了':'」'))}"></span>`;
+function charSides(x,y){
   const D=s=>`<del class="df-del">${esc(s)}</del>`, I=s=>`<ins class="df-ins">${esc(s)}</ins>`;
-  if(!x) return I(y);
-  if(!y) return D(x);
-  if(x.length>700 || y.length>700) return D(x)+I(y);      // 太長就整段當作換掉，不逐字算
-  const ops=lcsOps([...x],[...y],(p,q)=>p===q), X=[...x], Y=[...y];
-  let out='', kind='', buf='';
-  const flush=()=>{ if(buf){ out+= kind==='-'?D(buf):kind==='+'?I(buf):esc(buf); buf=''; } };
-  for(const o of ops){
-    const k=o.t, ch=k==='+'?Y[o.b]:X[o.a];
-    if(k!==kind){ flush(); kind=k; }
-    buf+=ch;
+  if(!x) return {o:gapMark('ins',y), n:I(y)};
+  if(!y) return {o:D(x), n:gapMark('del',x)};
+  if(x.length>700 || y.length>700) return {o:D(x), n:I(y)};     // 太長就整段當作換掉，不逐字算
+  const X=[...x], Y=[...y], ops=lcsOps(X,Y,(p,q)=>p===q);
+  const O=[], N=[];                                              // 每項是 [字, 是否標色]，或現成的標記 HTML
+  for(let i=0;i<ops.length;){
+    if(ops[i].t==='='){ O.push([X[ops[i].a],false]); N.push([Y[ops[i].b],false]); i++; continue; }
+    let dx='', iy='';
+    while(i<ops.length && ops[i].t!=='='){
+      if(ops[i].t==='-'){ dx+=X[ops[i].a]; O.push([X[ops[i].a],true]); }
+      else { iy+=Y[ops[i].b]; N.push([Y[ops[i].b],true]); }
+      i++;
+    }
+    if(dx && !iy) N.push(gapMark('del',dx));                     // 純刪除：目前版本留一條紅線
+    if(iy && !dx) O.push(gapMark('ins',iy));                     // 純新增：舊版留一條綠線
   }
-  flush(); return out;
+  const wrap=(arr,mk)=>{                                         // 連續同標記的字合成一段
+    let out='', cur='', m=null;
+    const fl=()=>{ if(cur){ out+= m ? mk(cur) : esc(cur); cur=''; } };
+    for(const it of arr){
+      if(typeof it==='string'){ fl(); out+=it; m=null; continue; }
+      if(it[1]!==m){ fl(); m=it[1]; } cur+=it[0];
+    }
+    fl(); return out;
+  };
+  return {o:wrap(O,D), n:wrap(N,I)};
 }
-function diffHtml(a,b){
+function diffSides(a,b){
   const W=s=>s.replace(/\s+/g,''), seg=s=>(s||'').split(/(?<=[。！？；\n])/).filter(x=>x!=='');
   const A=seg(a), B=seg(b), ops=lcsOps(A,B,(x,y)=>W(x)===W(y));
-  let out='', i=0;
+  let o='', n='', i=0;
   while(i<ops.length){
-    if(ops[i].t==='='){ out+=esc(B[ops[i].b]); i++; continue; }
+    if(ops[i].t==='='){ o+=esc(A[ops[i].a]); n+=esc(B[ops[i].b]); i++; continue; }
     const dels=[], ins=[];
     while(i<ops.length && ops[i].t!=='='){ (ops[i].t==='-'?dels:ins).push(ops[i]); i++; }
-    out+=charDiff(dels.map(o=>A[o.a]).join(''), ins.map(o=>B[o.b]).join(''));
+    const s=charSides(dels.map(p=>A[p.a]).join(''), ins.map(p=>B[p.b]).join(''));
+    o+=s.o; n+=s.n;
   }
-  return out;
+  return {o,n};
 }
 
 let archTimer;
@@ -2334,7 +2367,7 @@ $('#alist').onclick=ev=>{
   const b=ev.target.closest('[data-a]'); if(!b) return;
   const e=(ARCH||[]).find(x=>x.sid===b.closest('.acard').dataset.sid); if(!e) return;
   if(b.dataset.a==='open') e.open=!e.open;
-  if(b.dataset.a==='diff'){ const i=+b.dataset.i; e.diff.has(i)?e.diff.delete(i):e.diff.add(i); }
+  if(b.dataset.a==='diff'){ const i=+b.dataset.i; e.cmp = (e.cmp===i) ? -1 : i; }   // -1＝不比
   archRender();
 };
 
